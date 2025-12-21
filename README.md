@@ -8,7 +8,7 @@
 在金融市场中，单一指标往往具有欺骗性。本项目旨在构建一个**多因子风险加权模型**，通过整合华尔街最受关注的宏观估值指标（如巴菲特指标、席勒市盈率）与技术面指标（如均线乖离率、美债收益率曲线），计算出一个综合的 **"崩盘风险评分 (Crash Risk Score)"**。
 
 该工具帮助投资者在市场极度狂热时保持冷静，在极度恐慌时寻找机会，拒绝做“韭菜”。
-![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main.png?raw=true)
+![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main2.png?raw=true)
 ## **✨ 核心功能与优势 (Features & Pros)**
 
 * **多维度量化模型**：并非简单的价格追踪，而是结合了**宏观经济 (Macro)**、**估值 (Valuation)**、**市场情绪 (Sentiment)** 和 **技术形态 (Technical)** 的综合评分系统。  
