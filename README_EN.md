@@ -2,7 +2,7 @@
 
 **A full-stack quantitative analysis tool built with Python and Streamlit. It integrates macroeconomic indicators and technical analysis to monitor crash risks for the S\&P 500 (VOO) and Nasdaq 100 (QQQ) in real-time.**
 
-### [**🇨🇳 View Chinese Version / 中文文档**](https://www.google.com/search?q=https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/README.md)
+### [**🇨🇳 View Chinese Version / 中文文档**](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/README.md)
 
 **Note:** This tool was developed with the assistance of Gemini. Currently, it is best optimized for **VOO (S\&P 500\)**.
 
