@@ -12,7 +12,7 @@
 In financial markets, single indicators can often be deceptive. This project aims to build a **Multi-factor Risk-Weighted Model**. By integrating Wall Street's most-watched macro valuation metrics (e.g., the Buffett Indicator, Shiller PE) with technical indicators (e.g., Moving Average Deviation, Treasury Yield Curve), it calculates a comprehensive **"Crash Risk Score."**
 
 The tool helps investors stay rational during periods of extreme market euphoria and identify opportunities during extreme panic, avoiding the "herd mentality."
-![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main.png?raw=true)
+![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main2.png?raw=true)
 ## **✨ Core Features & Advantages**
 
 * **Multi-dimensional Quantitative Model**: More than just price tracking; it's a comprehensive scoring system combining **Macro**, **Valuation**, **Sentiment**, and **Technical** factors.  
