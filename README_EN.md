@@ -1,3 +1,4 @@
+### Disclaimer: The tool is written in Gemini3 and currently has the best compatibility with VOO (S&P 500); the thresholds for each indicator are based on the thresholds before the crashes in 2000, 2008, and 2021.
 # **🚨 Wall Street Quant: US Stock Crash Monitor**
 
 **A full-stack quantitative analysis tool built with Python and Streamlit. It integrates macroeconomic indicators and technical analysis to monitor crash risks for the S\&P 500 (VOO) and Nasdaq 100 (QQQ) in real-time.**
