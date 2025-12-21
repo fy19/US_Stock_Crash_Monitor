@@ -2,7 +2,7 @@
 # **🚨 Wall Street Quant: 美股崩盘风险监测仪 (US Stock Crash Monitor)**
 
 **基于 Python Streamlit 的全栈量化分析工具，集成宏观经济指标与技术面分析，实时监测标普500 (VOO) 与纳指100 (QQQ) 的崩盘风险。**
-
+### [**EN View English Version / 英文文档**](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/README_EN.md)
 ## **📖 项目简介 (Introduction)**
 
 在金融市场中，单一指标往往具有欺骗性。本项目旨在构建一个**多因子风险加权模型**，通过整合华尔街最受关注的宏观估值指标（如巴菲特指标、席勒市盈率）与技术面指标（如均线乖离率、美债收益率曲线），计算出一个综合的 **"崩盘风险评分 (Crash Risk Score)"**。
