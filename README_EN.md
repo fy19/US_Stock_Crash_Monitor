@@ -54,7 +54,9 @@ The model calculates risk based on 5 core factors (default weights are adjustabl
 
 4. Access the App  
    The browser will automatically open http://localhost:8501.
-
+5. Configuration parameters (Important)  
+   After launching, please follow the prompts in the left sidebar of the application page, click the link to obtain the latest GDP, PE, and other values, and manually enter them for accurate analysis.
+   
 ## **⚠️ Limitations**
 
 * **Data Lag**: Some macro data (like GDP) is updated quarterly and cannot reflect real-time intraday changes. Thus, the Buffett Indicator is better for long-term trends than short-term timing.  
