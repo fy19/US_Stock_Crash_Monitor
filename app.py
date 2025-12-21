@@ -314,6 +314,10 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
     # --- 因子 3: 收益率曲线 ---
     w_yield = weights['yield']
     spread = us_10y - us_2y
+    # 修改逻辑以适配历史数据特性：
+    # 2000年：倒挂 (-0.4) -> 危险
+    # 2007年：刚刚解挂 (+0.4) -> 极度危险 (往往倒挂回正才是衰退开始)
+    # 2022年：平坦 (+0.8) -> 警示
     if spread < -0.5:
         y_risk = 80
         status = "深度倒挂"
@@ -321,6 +325,7 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
         y_risk = 60
         status = "轻度倒挂"
     elif spread >= 0 and spread < 0.5:
+        # 这是历史上最危险的时刻（解挂期）
         y_risk = 70
         status = "解挂/平坦(危)"
     else:
@@ -331,7 +336,7 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
 
     # --- 因子 4: 200日均线乖离率 ---
     w_tech = weights['technical']
-    if sma_200 and not np.isnan(sma_200):
+    if sma_200 and not np.isnan(sma_200) and sma_200 != 0:
         deviation = (current_price - sma_200) / sma_200
         deviation_pct = deviation * 100
     else:
@@ -369,7 +374,56 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
 
 
 # ==========================================
-# 5. 主程序逻辑
+# 5. 历史对比数据 (NEW FEATURE)
+# ==========================================
+def get_historical_benchmarks():
+    """
+    返回历史上三次大崩盘前夕的宏观数据快照。
+    注意：为了计算方便，这里直接构造模拟的 Price/SMA 使得乖离率符合当时情况。
+    """
+    benchmarks = {
+        "2000 互联网泡沫 (Top)": {
+            "desc": "March 2000",
+            # 当时数据: 巴菲特指标~140%, Shiller PE~44, 利差倒挂 -0.4%
+            # 标普500乖离率约 10-15% (纳指则高得多)
+            "buffett": 145.0,
+            "shiller": 44.2,
+            "us_10y": 6.2,
+            "us_2y": 6.6,  # Spread -0.4
+            "fear": 90,  # 极度贪婪
+            # 构造 15% 乖离率 (115/100)
+            "mock_price": 115, "mock_sma": 100
+        },
+        "2008 次贷危机 (Pre-Crash)": {
+            "desc": "Oct 2007",
+            # 当时数据: 巴菲特指标~105%, Shiller PE~27, 利差回正 +0.4% (最危险信号)
+            # 标普500乖离率约 6-8%
+            "buffett": 110.0,
+            "shiller": 27.5,
+            "us_10y": 4.6,
+            "us_2y": 4.2,  # Spread +0.4 (刚刚解挂)
+            "fear": 75,  # 贪婪
+            # 构造 8% 乖离率
+            "mock_price": 108, "mock_sma": 100
+        },
+        "2022 加息熊市 (Top)": {
+            "desc": "Jan 2022",
+            # 当时数据: 巴菲特指标~200% (ATH), Shiller PE~38
+            # 利差 +0.8% (后续4月才倒挂), 乖离率 ~10%
+            "buffett": 195.0,
+            "shiller": 38.3,
+            "us_10y": 1.6,
+            "us_2y": 0.8,  # Spread +0.8
+            "fear": 75,
+            # 构造 12% 乖离率
+            "mock_price": 112, "mock_sma": 100
+        }
+    }
+    return benchmarks
+
+
+# ==========================================
+# 6. 主程序逻辑
 # ==========================================
 
 # 获取数据
@@ -388,11 +442,25 @@ st.markdown(
 st.markdown("---")
 
 if df is not None:
+    # 1. 计算当前风险
     final_risk_score, risk_details = calculate_risk_score(
         price, sma200, yield_10y, user_2y_yield,
         buffett_ratio, shiller_pe, fear_greed,
         user_weights
     )
+
+    # 2. 计算历史基准风险 (使用当前用户权重回测历史)
+    historical_data = get_historical_benchmarks()
+    historical_scores = {}
+
+    for era_name, data in historical_data.items():
+        h_score, _ = calculate_risk_score(
+            data['mock_price'], data['mock_sma'],
+            data['us_10y'], data['us_2y'],
+            data['buffett'], data['shiller'], data['fear'],
+            user_weights  # 关键：使用用户设定的权重
+        )
+        historical_scores[era_name] = h_score
 
     # --- 第一行: 仪表盘与建议 ---
     col1, col2 = st.columns([1, 2])
@@ -403,7 +471,7 @@ if df is not None:
             title={'text': f"{ticker_symbol} 崩盘风险指数"},
             gauge={
                 'axis': {'range': [0, 100]},
-                'bar': {'color': "rgba(0,0,0,0)"},
+                'bar': {'color': "rgba(0,0,0,0)"},  # 隐藏默认指针，如果你想自定义的话，或者保留
                 'steps': [
                     {'range': [0, 40], 'color': '#00cc96'},
                     {'range': [40, 70], 'color': '#ffa15a'},
@@ -416,6 +484,9 @@ if df is not None:
                 }
             }
         ))
+
+        # 尝试在 Gauge 下方添加简单的历史标注文本
+        # 由于Plotly Gauge添加多指针很麻烦，我们在下方用Bar Chart做对比更直观
         fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
         st.plotly_chart(fig_gauge, width="stretch")
 
@@ -437,6 +508,19 @@ if df is not None:
             <p style="margin-top:10px;">{advice}</p>
         </div>
         """, unsafe_allow_html=True)
+
+        # 新增：简易对比文本
+        st.markdown("##### 🆚 历史对比参考")
+        st.markdown("如果用当前的权重设置，历史大顶的风险分数为：")
+
+        # 简单展示一行小字对比
+        hist_text_cols = st.columns(3)
+        idx = 0
+        for name, score in historical_scores.items():
+            year_label = name.split(" ")[0]  # 提取 2000, 2008 等
+            with hist_text_cols[idx]:
+                st.metric(label=year_label + " 峰值", value=f"{score:.0f}")
+            idx += 1
 
     # --- 第二行: 因子详情 ---
     st.subheader("🔍 风险因子分解 (含自定义权重)")
@@ -485,6 +569,63 @@ if df is not None:
             delta=f"Risk: {risk_details['Sentiment'][0]}",
             delta_color="inverse"
         )
+
+    st.markdown("---")
+
+    # ==========================================
+    # 新增模块：历史风险对比图表
+    # ==========================================
+    st.subheader("⚔️ 跨时代风险大比拼 (Stress Test)")
+    st.caption("基于你当前设定的权重，对比**当前市场**与**历史上三次著名崩盘前夜**的风险评分。")
+
+    # 准备绘图数据
+    comparison_names = ["当前 (Now)"] + list(historical_scores.keys())
+    comparison_scores = [final_risk_score] + list(historical_scores.values())
+
+    # 颜色逻辑：根据分数变色
+    bar_colors = []
+    for s in comparison_scores:
+        if s > 80:
+            bar_colors.append('#ef553b')  # Red
+        elif s > 60:
+            bar_colors.append('#ffa15a')  # Orange
+        else:
+            bar_colors.append('#00cc96')  # Green
+
+    # 当前选中的高亮边框
+    border_colors = ['white'] + ['rgba(0,0,0,0)'] * 3
+    border_widths = [2] + [0] * 3
+
+    fig_hist = go.Figure(go.Bar(
+        x=comparison_scores,
+        y=comparison_names,
+        orientation='h',
+        text=[f"{s:.1f}" for s in comparison_scores],
+        textposition='auto',
+        marker=dict(color=bar_colors, line=dict(color=border_colors, width=border_widths))
+    ))
+
+    fig_hist.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=20, b=20),
+        template="plotly_dark",
+        xaxis=dict(range=[0, 100], title="风险评分 (0-100)"),
+        yaxis=dict(autorange="reversed")  # 让当前排在最上面
+    )
+
+    # 添加参考竖线
+    fig_hist.add_vline(x=60, line_width=1, line_dash="dash", line_color="orange", annotation_text="警告线")
+    fig_hist.add_vline(x=80, line_width=1, line_dash="dash", line_color="red", annotation_text="崩盘线")
+
+    st.plotly_chart(fig_hist, width="stretch")
+
+    with st.expander("ℹ️ 查看历史数据来源说明"):
+        st.markdown("""
+        * **2000 互联网泡沫**: 选取 2000年3月 数据。特征是极高的 Shiller PE (44+) 和 倒挂的利差。
+        * **2008 次贷危机**: 选取 2007年10月 数据。特征是股市见顶，利差刚从倒挂恢复变正（经典的衰退信号）。
+        * **2022 加息熊市**: 选取 2022年1月 数据。特征是巴菲特指标创历史新高 (~200%)。
+        * **计算逻辑**: 使用您在侧边栏调整的权重，实时计算这些历史时刻如果套用当前模型会得多少分。
+        """)
 
     st.markdown("---")
 
