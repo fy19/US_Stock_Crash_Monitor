@@ -16,40 +16,70 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# 项目 GitHub 地址
+GITHUB_URL = "https://github.com/middletoo/US_Stock_Crash_Monitor"
+
 # 自定义CSS
-st.markdown("""
+st.markdown(f"""
 <style>
-    .metric-card {
+    /* 左上角 GitHub 浮动标签 */
+    .github-corner {{
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        z-index: 9999;
+        text-decoration: none;
+        color: white;
+        background: #24292e;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        transition: all 0.3s ease;
+        border: 1px solid #444;
+    }}
+    .github-corner:hover {{
+        background: #444;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
+        color: #4da6ff;
+    }}
+
+    .metric-card {{
         background-color: #0e1117;
         border: 1px solid #30333F;
         padding: 15px;
         border-radius: 5px;
         color: white;
-    }
-    .stProgress > div > div > div > div {
+    }}
+    .stProgress > div > div > div > div {{
         background-color: #ff4b4b;
-    }
-    h1, h2, h3 {
+    }}
+    h1, h2, h3 {{
         font-family: 'Roboto', sans-serif;
-    }
+    }}
     /* 让Metric的label更明显一点 */
-    div[data-testid="stMetricLabel"] {
+    div[data-testid="stMetricLabel"] {{
         font-size: 14px; 
         color: #9da3ad;
-    }
+    }}
     /* 链接样式 */
-    .source-link {
+    .source-link {{
         font-size: 0.85em;
         color: #4da6ff;
         text-decoration: none;
         margin-bottom: 5px;
         display: inline-block;
-    }
-    .source-link:hover {
+    }}
+    .source-link:hover {{
         text-decoration: underline;
-    }
+    }}
     /* 阈值提示样式 */
-    .threshold-info {
+    .threshold-info {{
         font-size: 0.8em;
         color: #a0a0a0;
         background-color: #262730;
@@ -57,8 +87,14 @@ st.markdown("""
         padding: 10px;
         margin-top: 5px;
         border-radius: 4px;
-    }
+    }}
 </style>
+
+<!-- GitHub 浮动标签 HTML -->
+<a href="{GITHUB_URL}" target="_blank" class="github-corner">
+    <svg height="18" width="18" viewBox="0 0 16 16" fill="white"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+    GitHub 项目
+</a>
 """, unsafe_allow_html=True)
 
 
@@ -137,6 +173,9 @@ def get_market_data(ticker="VOO", proxy=None):
 # ==========================================
 st.sidebar.title("🛠️ 设置与校准")
 
+# 侧边栏顶部也增加一个源码链接，方便移动端查看
+st.sidebar.markdown(f"[📂 查看 GitHub 源代码]({GITHUB_URL})")
+
 # --- 标的选择 ---
 st.sidebar.subheader("0. 监测标的")
 target_option = st.sidebar.selectbox(
@@ -146,11 +185,10 @@ target_option = st.sidebar.selectbox(
 )
 ticker_symbol = "VOO" if "VOO" in target_option else "QQQ"
 
-# --- 权重配置 (新增: 用户可调节) ---
+# --- 权重配置 ---
 with st.sidebar.expander("⚖️ 模型权重配置 (点击展开)", expanded=False):
-    st.caption("您可以根据当前市场环境，拖动滑块调整各指标权重。(非金融专业人士默认权重即可)")
+    st.caption("您可以根据当前市场环境，拖动滑块调整各指标权重。")
 
-    # 设置默认值为上次的优化值
     w_buffett_input = st.slider("1. 巴菲特指标权重", 0, 50, 15, 5, format="%d%%")
     w_shiller_input = st.slider("2. 席勒市盈率权重", 0, 50, 25, 5, format="%d%%")
     w_yield_input = st.slider("3. 美债利差权重", 0, 50, 25, 5, format="%d%%")
@@ -159,13 +197,11 @@ with st.sidebar.expander("⚖️ 模型权重配置 (点击展开)", expanded=Fa
 
     total_weight_score = w_buffett_input + w_shiller_input + w_yield_input + w_tech_input + w_sentiment_input
 
-    # 颜色提示
     if total_weight_score != 100:
         st.warning(f"⚠️ 当前权重总和: {total_weight_score}% (建议调整为 100%)")
     else:
         st.success(f"✅ 权重总和: {total_weight_score}% (完美)")
 
-    # 转换为小数供计算使用
     user_weights = {
         'buffett': w_buffett_input / 100.0,
         'shiller': w_shiller_input / 100.0,
@@ -179,7 +215,7 @@ with st.sidebar.expander("🌐 网络连接设置", expanded=False):
     st.caption("无法连接Yahoo Finance时请填入代理，或留空使用**模拟演示模式**。")
     proxy_url = st.text_input("HTTP代理地址", placeholder="例如 http://127.0.0.1:7890")
 
-# --- 宏观数据输入 (带详细历史阈值) ---
+# --- 宏观数据输入 ---
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("1. 巴菲特指标 (Buffett Indicator)")
@@ -227,23 +263,12 @@ st.sidebar.info("""
 * **正常状态**: +0.8% ~ +2.0%
 * **倒挂预警 (< 0%)**: 2000, 2007, 2019, 2022 均出现
 * **解挂风险 (倒挂后回升至 > 0%)**: 最危险时刻。
-  (例如2008年初，利差从负转正后股市暴跌)
 """)
 
 st.sidebar.subheader("4. 恐慌与贪婪指数")
 st.sidebar.markdown("[🔗 CNN Fear & Greed](https://edition.cnn.com/markets/fear-and-greed)", unsafe_allow_html=True)
 fear_greed = st.sidebar.slider("Fear & Greed Index (0-100)", 0, 100, 45)
 st.sidebar.caption("极度贪婪 (>80) 往往是短期顶部信号。")
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("**📈 关于 200日均线乖离率 (自动计算)**")
-st.sidebar.info("""
-**📊 历史参考阈值:**
-* **历史平均**: ~0% (均值回归)
-* **危险阈值**: > 15% (短期过热)
-* **极度泡沫**: > 20% (如 2000年, 2021年)
-* **抄底机会**: < -15% (如 2008年, 2020年3月)
-""")
 
 
 # ==========================================
@@ -258,13 +283,12 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
 
     # --- 因子 1: 巴菲特指标 ---
     w_buffett = weights['buffett']
-    # 阈值参考：考虑到近10年估值中枢上移，适当放宽一点点，但依然保持警惕
     if buffett_val > 200:
-        b_risk = 100  # 2021水平
+        b_risk = 100
     elif buffett_val > 180:
         b_risk = 90
     elif buffett_val > 150:
-        b_risk = 75  # 近10年均值附近
+        b_risk = 75
     elif buffett_val > 120:
         b_risk = 50
     else:
@@ -275,11 +299,11 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
     # --- 因子 2: Shiller PE ---
     w_shiller = weights['shiller']
     if shiller_val > 40:
-        s_risk = 100  # 接近2000年水平
+        s_risk = 100
     elif shiller_val > 35:
-        s_risk = 90  # 2021年水平
+        s_risk = 90
     elif shiller_val > 30:
-        s_risk = 70  # 1929年水平/近10年均值
+        s_risk = 70
     elif shiller_val > 25:
         s_risk = 50
     else:
@@ -290,7 +314,6 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
     # --- 因子 3: 收益率曲线 ---
     w_yield = weights['yield']
     spread = us_10y - us_2y
-    # 逻辑：深度倒挂虽然预示衰退，但股市往往在“解挂”（spread回到0以上）时才真正崩盘
     if spread < -0.5:
         y_risk = 80
         status = "深度倒挂"
@@ -299,7 +322,7 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
         status = "轻度倒挂"
     elif spread >= 0 and spread < 0.5:
         y_risk = 70
-        status = "解挂/平坦(危)"  # 解挂初期往往最危险
+        status = "解挂/平坦(危)"
     else:
         y_risk = 30
         status = "正常"
@@ -317,9 +340,9 @@ def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shi
     if deviation_pct > 25:
         m_risk = 100
     elif deviation_pct > 20:
-        m_risk = 85  # 2000年水平
+        m_risk = 85
     elif deviation_pct > 15:
-        m_risk = 65  # 警戒线
+        m_risk = 65
     elif deviation_pct > 5:
         m_risk = 40
     elif deviation_pct < -10:
@@ -365,7 +388,6 @@ st.markdown(
 st.markdown("---")
 
 if df is not None:
-    # 关键修改：传入 user_weights 字典，确保权重调节生效
     final_risk_score, risk_details = calculate_risk_score(
         price, sma200, yield_10y, user_2y_yield,
         buffett_ratio, shiller_pe, fear_greed,
@@ -416,7 +438,7 @@ if df is not None:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- 第二行: 因子详情 (带权重展示) ---
+    # --- 第二行: 因子详情 ---
     st.subheader("🔍 风险因子分解 (含自定义权重)")
 
 
@@ -447,8 +469,7 @@ if df is not None:
             label=get_label("10Y-2Y 利差", 'yield'),
             value=f"{spread_val:.2f}%",
             delta=status_text,
-            delta_color="off",
-            help=f"计算公式: 10年期({yield_10y:.2f}%) - 2年期({user_2y_yield:.2f}%)"
+            delta_color="off"
         )
     with m4:
         st.metric(
