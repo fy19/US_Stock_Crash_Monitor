@@ -1,73 +1,103 @@
-##### 声明：工具为Gemini3编写，目前voo(标普500适配度最好);各个指标阈值参考2000年，2008年和2021年崩盘前的阈值。
-# **🚨 Wall Street Quant: 美股崩盘风险监测仪 (US Stock Crash Monitor)**
+# US Market Regime Monitor v2.2
 
-**基于 Python Streamlit 的全栈量化分析工具，集成宏观经济指标与技术面分析，实时监测标普500 (VOO) 与纳指100 (QQQ) 的崩盘风险。**
-### [**EN View English Version / 英文文档**](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/README_EN.md)
-## **📖 项目简介 (Introduction)**
+这是一个基于 Streamlit 的美股市场状态仪表盘，分别分析 VOO（S&P 500）和 QQQ（Nasdaq-100）。
 
-在金融市场中，单一指标往往具有欺骗性。本项目旨在构建一个**多因子风险加权模型**，通过整合华尔街最受关注的宏观估值指标（如巴菲特指标、席勒市盈率）与技术面指标（如均线乖离率、美债收益率曲线），计算出一个综合的 **"崩盘风险评分 (Crash Risk Score)"**。
+v2.2 不再输出一个容易误导的“崩盘风险总分”，也不再使用“分数越高、卖得越多”的规则。系统将市场估值与脆弱性、已发生的市场压力，以及恐慌后的分批买入分开处理。
 
-该工具帮助投资者在市场极度狂热时保持冷静，在极度恐慌时寻找机会，拒绝做“韭菜”。
-![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main2.png?raw=true)
-## **✨ 核心功能与优势 (Features & Pros)**
+## 三层决策结构
 
-* **多维度量化模型**：并非简单的价格追踪，而是结合了**宏观经济 (Macro)**、**估值 (Valuation)**、**市场情绪 (Sentiment)** 和 **技术形态 (Technical)** 的综合评分系统。  
-* **双标的切换**：支持 **VOO (S\&P 500\)** 和 **QQQ (Nasdaq 100\)** 自由切换，针对不同波动率的资产进行独立分析。  
-* **高度可定制化**：  
-  * **权重调节**：用户可根据当前市场环境（如高息环境或AI泡沫）动态调整各指标的权重。  
-  * **手动校准**：针对 GDP 等非实时API数据，提供侧边栏手动输入与权威数据源跳转，确保数据精准。  
-* **鲁棒性设计**：内置网络容错机制，当 Yahoo Finance API 连接失败时，自动平滑切换至**模拟演示模式**，保证演示不崩溃。  
-* **历史数据对比**：提供 2000年、2008年、2021年等历史关键崩盘点的阈值参考，以史为鉴。  
-* **交互式图表**：使用 Plotly 绘制的高性能交互式 K 线图与仪表盘。
+1. **Risk Build-up Engine**：市场是否昂贵、流动性收紧、内部结构变弱？
+2. **Escalation Gate**：指数已经回撤至少 10% 后，这次调整是否更可能升级成熊市？
+3. **Panic Buy Engine**：高波动叠加大回撤后，应使用多少预留资金分批买入？
 
-## **🛠️ 监测指标体系 (Indicators)**
+## 五个状态模块
 
-本模型基于以下 5 大核心因子计算风险（默认权重可调）：
+| 模块 | 主要输入 | 用途 |
+|---|---|---|
+| Valuation | CAPE、Buffett Indicator | 长期估值背景；相关指标只计一票 |
+| Recession | 10Y-3M、Sahm、信用/金融条件确认 | 区分就业预警与衰退确认 |
+| Monetary/Liquidity | Real Fed Funds、NFCI 及 13 周变化 | 捕捉 2018/2022 式紧缩熊市 |
+| Fragility | 50/200DMA、等权/市值权重相对强弱；QQQ 另看半导体 | 衡量市场内部结构 |
+| Panic/Stress | VIX/VXN、回撤、HY OAS | 确认压力并寻找逆向买入条件 |
 
-1. **巴菲特指标 (Buffett Indicator)**：美股总市值 / 美国 GDP。衡量整体股市泡沫程度。  
-2. **席勒市盈率 (Shiller PE / CAPE)**：经通胀调整的周期性市盈率，穿越牛熊的估值标尺。  
-3. **美债收益率曲线 (10Y-2Y Spread)**：著名的衰退预警指标，重点监测“倒挂后解挂”的高危时刻。  
-4. **200日均线乖离率 (200-MA Deviation)**：衡量价格短期偏离长期趋势的程度，判断是否严重超买。  
-5. **恐慌与贪婪指数 (Fear & Greed Index)**：反向指标，极度贪婪往往预示着短期顶部。
+这五个模块不会被简单平均成一个总分。同一风险源（例如 CAPE 与 Buffett Indicator）不会重复加权。
 
-## **🚀 快速开始 (Installation & Usage)**
+## Escalation Gate
 
-### **环境要求**
+只有 52 周回撤达到 **-10%** 才启用。它检查三个实时信号：
 
-* Python 3.8 或更高版本
+- 最近 24 个月出现过 10Y-3M 倒挂；
+- Real Fed Funds ≥ 1.5%；
+- HY OAS 较 52 周低点扩大 ≥ 200bp。
 
-### **安装步骤**
+| 信号数 | 模型判断 |
+|---:|---|
+| 0 | 普通调整概率更高 |
+| 1 | Watch |
+| 2 | Bear Escalation |
+| 3 | Severe Bear Risk |
 
-1. **克隆仓库**  
-   git clone \[[https://github.com/middletoo/US_Stock_Crash_Monitor.git\]([https://github.com/middletoo/US_Stock_Crash_Monitor.git)  
-   cd US_Stock_Crash_Monitor
+这些阈值是待回测的 v1 规则，不代表事件概率。
 
-2. 安装依赖库  
-   建议使用虚拟环境：  
-   pip install streamlit yfinance pandas numpy plotly
+## VOO 与 QQQ 独立阈值
 
-3. **运行应用**  
-   streamlit run app.py
+VOO 使用 VIX；QQQ 使用 VXN，并额外观察 QQEW/QQQ 与 SMH/QQQ。
 
-4. 访问应用  
-   浏览器会自动打开 http://localhost:8501。
+| 标的 | Normal | Watch | Stress | Panic | Extreme | Systemic |
+|---|---:|---:|---:|---:|---:|---:|
+| VOO / VIX | <20 | 20–25 | 25–30 | 30–40 | 40–60 | ≥60 |
+| QQQ / VXN | <25 | 25–30 | 30–35 | 35–45 | 45–60 | ≥60 |
 
-5. 配置参数(重要)  
-   启动后，请根据应用页面左侧边栏的提示，点击链接获取最新的 GDP、PE 等数值并手动填入以获得准确分析。
+实际判断同时使用绝对阈值与五年滚动百分位。
 
-## **⚠️ 局限性与缺点 (Limitations)**
+## Panic Buy Engine
 
-* **数据滞后性**：部分宏观数据（如 GDP）为季度更新，无法反映实时的日内变化，因此巴菲特指标适合看长期趋势，不适合短线择时。  
-* **线性加权缺陷**：目前的评分模型采用线性加权求和，而真实市场的崩盘往往是黑天鹅事件引发的非线性连锁反应。  
-* **API 限制**：依赖 yfinance 免费接口，可能会有访问频率限制或国内网络访问不畅的问题（已内置代理设置功能）。  
-* **主观因素**：虽然模型是量化的，但输入参数（如 GDP 预测值）和权重设置仍包含用户的主观判断。
+所有比例均针对预先独立留出的 **Crash Reserve**，不是整个投资组合。
 
-## **🛡️ 免责声明 (Disclaimer)**
+| 市场阶段 | 核心条件 | 本档预备资金 |
+|---|---|---:|
+| Initial Correction | 回撤 10–15% + Stress | 10–15% |
+| Deep Correction | 回撤 15–20% + Panic | 20% |
+| Bear Market | 回撤 20–30% + Panic | 25% |
+| Extreme Panic | VIX≥40 / VXN≥45 + 大回撤 | 15–20% |
+| Recovery | 3 项修复条件满足 2 项 | 25–30% |
 
-**本项目仅供编程学习与量化研究参考，不构成任何投资建议。**
+若 Sahm 劳动力预警同时得到信用或 NFCI 的确认，系统会把恐慌买入档降至 10–15%，避免在衰退型熊市中过早耗尽资金。
 
-* 金融市场风险巨大，投资需谨慎。  
-* 本工具提供的“风险评分”基于历史数据统计，历史表现不代表未来走势。  
-* 作者不对使用本代码导致的任何资金损失负责。
+Recovery 的三项条件是：本轮回撤期间波动率曾进入 Panic 且自峰值回落至少 20%、HY OAS 不再扩大、趋势与等权参与度改善。
 
-**如果你觉得这个项目对你有帮助，请给一个 ⭐️ Star！**
+## 数据
+
+- Yahoo Finance：VOO/QQQ 价格、VIX/VXN、RSP/SPY、QQEW/QQQ、SMH/QQQ。
+- FRED：DGS10、DGS3MO、FEDFUNDS、CPIAUCSL、SAHMREALTIME、BAMLH0A0HYM2、NFCI。
+- CAPE 与 Buffett Indicator：在侧边栏手动校准，避免把低频或滞后数据伪装成实时数据。
+
+若在线数据失败，Dashboard 会明确进入演示/备用模式；此时不得把结果用于投资决策。
+
+## 安装与运行
+
+```bash
+git clone https://github.com/fy19/US_Stock_Crash_Monitor.git
+cd US_Stock_Crash_Monitor
+python -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+运行模型测试：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+## 当前限制
+
+- Fragility 使用 ETF 趋势与等权相对强弱作为 breadth 代理，并非真实成分股 breadth。
+- CAPE/Buffett 的 0–100 值为透明的历史区间近似；完整回测应使用 point-in-time 历史百分位。
+- 尚未完成 1995–2026 的逐日无前视偏差回测。
+- HY OAS、宏观数据和免费行情源可能存在发布滞后或修订。
+
+下一阶段应建立 Daily Backtest v1，报告 Precision、Recall、False Positive、Lead Time、Max Drawdown、CAGR 与 Sortino，并单独校准 VOO 和 QQQ。
+
+## 免责声明
+
+本项目仅供编程学习和量化研究，不构成投资建议。历史关系不保证未来表现。

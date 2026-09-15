@@ -1,642 +1,400 @@
+"""Streamlit dashboard for the US Market Regime Monitor v2.2."""
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+import os
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import random
 
-# ==========================================
-# 1. 页面配置与样式 (UI Configuration)
-# ==========================================
+from model import MarketInputs, VOLATILITY_THRESHOLDS, assess_market
+
+
+GITHUB_URL = "https://github.com/fy19/US_Stock_Crash_Monitor"
+FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
+
+
+@dataclass
+class MarketSnapshot:
+    price_history: pd.DataFrame
+    current_price: float
+    peak_52w: float
+    sma_50: float
+    sma_200: float
+    volatility: float
+    volatility_peak_since_price_peak: float
+    volatility_percentile_5y: float
+    equal_weight_ratio: float
+    equal_weight_sma_50: float
+    semi_ratio: float | None
+    semi_ratio_sma_50: float | None
+    is_mock: bool
+
+
 st.set_page_config(
-    page_title="美股崩盘风险监测仪",
-    page_icon="📉",
+    page_title="US Market Regime Monitor v2.2",
+    page_icon="🧭",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# 项目 GitHub 地址
-GITHUB_URL = "https://github.com/middletoo/US_Stock_Crash_Monitor"
-
-# 自定义CSS
-st.markdown(f"""
-<style>
-    /* 左上角 GitHub 浮动标签 */
-    .github-corner {{
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        z-index: 9999;
-        text-decoration: none;
-        color: white;
-        background: #24292e;
-        padding: 6px 12px;
-        border-radius: 20px;
-        font-size: 13px;
-        font-weight: bold;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-        transition: all 0.3s ease;
-        border: 1px solid #444;
-    }}
-    .github-corner:hover {{
-        background: #444;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0,0,0,0.5);
-        color: #4da6ff;
-    }}
-
-    .metric-card {{
-        background-color: #0e1117;
-        border: 1px solid #30333F;
-        padding: 15px;
-        border-radius: 5px;
-        color: white;
-    }}
-    .stProgress > div > div > div > div {{
-        background-color: #ff4b4b;
-    }}
-    h1, h2, h3 {{
-        font-family: 'Roboto', sans-serif;
-    }}
-    /* 让Metric的label更明显一点 */
-    div[data-testid="stMetricLabel"] {{
-        font-size: 14px; 
-        color: #9da3ad;
-    }}
-    /* 链接样式 */
-    .source-link {{
-        font-size: 0.85em;
-        color: #4da6ff;
-        text-decoration: none;
-        margin-bottom: 5px;
-        display: inline-block;
-    }}
-    .source-link:hover {{
-        text-decoration: underline;
-    }}
-    /* 阈值提示样式 */
-    .threshold-info {{
-        font-size: 0.8em;
-        color: #a0a0a0;
-        background-color: #262730;
-        border-left: 3px solid #ff4b4b;
-        padding: 10px;
-        margin-top: 5px;
-        border-radius: 4px;
-    }}
-</style>
-
-<!-- GitHub 浮动标签 HTML -->
-<a href="{GITHUB_URL}" target="_blank" class="github-corner">
-    <svg height="18" width="18" viewBox="0 0 16 16" fill="white"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-    GitHub 项目
-</a>
-""", unsafe_allow_html=True)
-
-
-# ==========================================
-# 2. 数据获取与处理模块 (Data Pipeline)
-# ==========================================
-
-def generate_mock_data(ticker_name="VOO"):
+st.markdown(
     """
-    生成逼真的模拟数据，用于演示模式
-    """
-    dates = pd.date_range(end=datetime.now(), periods=500, freq='B')
-    base_price = 500 if ticker_name == "QQQ" else 450
+    <style>
+    .regime-box {padding: 22px; border-radius: 12px; color: white; margin: 8px 0 18px 0;}
+    .small-note {color: #9da3ad; font-size: 0.85rem;}
+    div[data-testid="stMetric"] {background: #141923; border: 1px solid #303846; padding: 14px; border-radius: 10px;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    trend = np.linspace(0, 50, 500)
-    noise = np.random.normal(0, 5, 500).cumsum()
-    prices = base_price + trend + noise
 
-    df = pd.DataFrame(index=dates)
-    df['Open'] = prices + np.random.uniform(-2, 2, 500)
-    df['High'] = df['Open'] + np.random.uniform(0, 5, 500)
-    df['Low'] = df['Open'] - np.random.uniform(0, 5, 500)
-    df['Close'] = prices
-    df['SMA_200'] = df['Close'].rolling(window=200).mean()
-
-    current_price = df['Close'].iloc[-1]
-    sma_200 = df['SMA_200'].iloc[-1]
-
-    us_10y_yield = 4.15 + random.uniform(-0.1, 0.1)
-
-    return df, current_price, sma_200, us_10y_yield, True
+def _close(history: pd.DataFrame) -> pd.Series:
+    if history.empty or "Close" not in history:
+        raise ValueError("price history is empty")
+    return history["Close"].dropna().astype(float)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_market_data(ticker="VOO", proxy=None):
-    """
-    获取数据，失败则回退到模拟数据
-    """
+def _history(symbol: str, period: str = "5y") -> pd.DataFrame:
+    data = yf.Ticker(symbol).history(period=period, auto_adjust=True)
+    if data.empty:
+        raise ValueError(f"no data returned for {symbol}")
+    return data
+
+
+def _mock_snapshot(ticker: str) -> MarketSnapshot:
+    rng = np.random.default_rng(22 if ticker == "QQQ" else 11)
+    dates = pd.date_range(end=datetime.now(), periods=1260, freq="B")
+    base = 350.0 if ticker == "QQQ" else 400.0
+    returns = rng.normal(0.00035, 0.012 if ticker == "QQQ" else 0.009, len(dates))
+    prices = base * np.exp(np.cumsum(returns))
+    frame = pd.DataFrame(index=dates)
+    frame["Close"] = prices
+    frame["Open"] = frame["Close"] * (1 + rng.normal(0, 0.002, len(frame)))
+    frame["High"] = frame[["Open", "Close"]].max(axis=1) * 1.004
+    frame["Low"] = frame[["Open", "Close"]].min(axis=1) * 0.996
+    frame["SMA_50"] = frame["Close"].rolling(50).mean()
+    frame["SMA_200"] = frame["Close"].rolling(200).mean()
+    current = float(frame["Close"].iloc[-1])
+    vol = 27.0 if ticker == "QQQ" else 18.0
+    return MarketSnapshot(
+        price_history=frame,
+        current_price=current,
+        peak_52w=float(frame["Close"].tail(252).max()),
+        sma_50=float(frame["SMA_50"].iloc[-1]),
+        sma_200=float(frame["SMA_200"].iloc[-1]),
+        volatility=vol,
+        volatility_peak_since_price_peak=vol * 1.7,
+        volatility_percentile_5y=55.0,
+        equal_weight_ratio=1.0,
+        equal_weight_sma_50=1.0,
+        semi_ratio=1.0 if ticker == "QQQ" else None,
+        semi_ratio_sma_50=1.0 if ticker == "QQQ" else None,
+        is_mock=True,
+    )
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_market_snapshot(ticker: str, proxy: str = "") -> MarketSnapshot:
+    if os.getenv("US_MARKET_MONITOR_OFFLINE") == "1":
+        return _mock_snapshot(ticker)
     try:
         if proxy:
-            import os
             os.environ["http_proxy"] = proxy
             os.environ["https_proxy"] = proxy
 
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=730)
+        vol_symbol = "^VIX" if ticker == "VOO" else "^VXN"
+        equal_symbol = "RSP" if ticker == "VOO" else "QQEW"
+        benchmark_symbol = "SPY" if ticker == "VOO" else "QQQ"
 
-        stock = yf.Ticker(ticker)
-        df = stock.history(start=start_date, end=end_date)
+        price_history = _history(ticker).copy()
+        price_close = _close(price_history)
+        price_history["SMA_50"] = price_close.rolling(50).mean()
+        price_history["SMA_200"] = price_close.rolling(200).mean()
 
-        if df.empty:
-            raise ValueError("获取到的数据为空")
+        vol_close = _close(_history(vol_symbol))
+        equal_close = _close(_history(equal_symbol))
+        benchmark_close = _close(_history(benchmark_symbol))
+        ratio = pd.concat([equal_close, benchmark_close], axis=1, join="inner").dropna()
+        ratio.columns = ["equal", "benchmark"]
+        equal_ratio = ratio["equal"] / ratio["benchmark"]
 
-        current_price = df['Close'].iloc[-1]
-        df['SMA_200'] = df['Close'].rolling(window=200).mean()
-        sma_200 = df['SMA_200'].iloc[-1]
+        semi_ratio = None
+        semi_ratio_sma = None
+        if ticker == "QQQ":
+            semi_close = _close(_history("SMH"))
+            semi = pd.concat([semi_close, benchmark_close], axis=1, join="inner").dropna()
+            semi.columns = ["semi", "benchmark"]
+            semi_series = semi["semi"] / semi["benchmark"]
+            semi_ratio = float(semi_series.iloc[-1])
+            semi_ratio_sma = float(semi_series.rolling(50).mean().iloc[-1])
 
-        try:
-            tnx = yf.Ticker("^TNX")
-            tnx_hist = tnx.history(period="5d")
-            if not tnx_hist.empty:
-                us_10y_yield = tnx_hist['Close'].iloc[-1]
-            else:
-                us_10y_yield = 4.0
-        except:
-            us_10y_yield = 4.0
+        price_peak_date = price_close.tail(252).idxmax()
+        vol_since_price_peak = vol_close.loc[vol_close.index >= price_peak_date]
+        current_vol = float(vol_close.iloc[-1])
+        vol_percentile = float((vol_close <= current_vol).mean() * 100.0)
+        return MarketSnapshot(
+            price_history=price_history,
+            current_price=float(price_close.iloc[-1]),
+            peak_52w=float(price_close.tail(252).max()),
+            sma_50=float(price_history["SMA_50"].iloc[-1]),
+            sma_200=float(price_history["SMA_200"].iloc[-1]),
+            volatility=current_vol,
+            volatility_peak_since_price_peak=float(vol_since_price_peak.max()),
+            volatility_percentile_5y=vol_percentile,
+            equal_weight_ratio=float(equal_ratio.iloc[-1]),
+            equal_weight_sma_50=float(equal_ratio.rolling(50).mean().iloc[-1]),
+            semi_ratio=semi_ratio,
+            semi_ratio_sma_50=semi_ratio_sma,
+            is_mock=False,
+        )
+    except Exception:
+        return _mock_snapshot(ticker)
 
-        return df, current_price, sma_200, us_10y_yield, False
 
-    except Exception as e:
-        return generate_mock_data(ticker)
+@st.cache_data(ttl=21600, show_spinner=False)
+def _fred_series(series_id: str) -> pd.Series:
+    frame = pd.read_csv(FRED_URL.format(series_id))
+    frame.columns = ["date", "value"]
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce")
+    frame["value"] = pd.to_numeric(frame["value"], errors="coerce")
+    return frame.dropna().set_index("date")["value"].sort_index()
 
 
-# ==========================================
-# 3. 侧边栏：配置与输入
-# ==========================================
-st.sidebar.title("🛠️ 设置与校准")
+def _prior_value(series: pd.Series, days: int) -> float:
+    cutoff = series.index[-1] - timedelta(days=days)
+    prior = series.loc[:cutoff]
+    return float(prior.iloc[-1] if not prior.empty else series.iloc[0])
 
-# 侧边栏顶部也增加一个源码链接，方便移动端查看
-st.sidebar.markdown(f"[📂 查看 GitHub 源代码]({GITHUB_URL})")
 
-# --- 标的选择 ---
-st.sidebar.subheader("0. 监测标的")
-target_option = st.sidebar.selectbox(
-    "选择你要分析的ETF",
-    ["VOO (标普500)", "QQQ (纳指100)"],
-    index=0
-)
-ticker_symbol = "VOO" if "VOO" in target_option else "QQQ"
-
-# --- 权重配置 ---
-with st.sidebar.expander("⚖️ 模型权重配置 (点击展开)", expanded=False):
-    st.caption("您可以根据当前市场环境，拖动滑块调整各指标权重。")
-
-    w_buffett_input = st.slider("1. 巴菲特指标权重", 0, 50, 15, 5, format="%d%%")
-    w_shiller_input = st.slider("2. 席勒市盈率权重", 0, 50, 25, 5, format="%d%%")
-    w_yield_input = st.slider("3. 美债利差权重", 0, 50, 25, 5, format="%d%%")
-    w_tech_input = st.slider("4. 均线乖离权重", 0, 50, 20, 5, format="%d%%")
-    w_sentiment_input = st.slider("5. 恐慌指数权重", 0, 50, 15, 5, format="%d%%")
-
-    total_weight_score = w_buffett_input + w_shiller_input + w_yield_input + w_tech_input + w_sentiment_input
-
-    if total_weight_score != 100:
-        st.warning(f"⚠️ 当前权重总和: {total_weight_score}% (建议调整为 100%)")
-    else:
-        st.success(f"✅ 权重总和: {total_weight_score}% (完美)")
-
-    user_weights = {
-        'buffett': w_buffett_input / 100.0,
-        'shiller': w_shiller_input / 100.0,
-        'yield': w_yield_input / 100.0,
-        'technical': w_tech_input / 100.0,
-        'sentiment': w_sentiment_input / 100.0
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_macro_snapshot() -> tuple[dict, bool]:
+    fallback = {
+        "curve_inverted_24m": False,
+        "curve_spread": 0.50,
+        "real_fed_funds": 0.25,
+        "sahm": 0.00,
+        "hy_oas": 3.00,
+        "hy_low_52w": 2.70,
+        "hy_delta_13w": 0.10,
+        "nfci": -0.50,
+        "nfci_delta_13w": 0.00,
     }
+    if os.getenv("US_MARKET_MONITOR_OFFLINE") == "1":
+        return fallback, True
+    try:
+        ten_year = _fred_series("DGS10")
+        three_month = _fred_series("DGS3MO")
+        rates = pd.concat([ten_year, three_month], axis=1).ffill().dropna()
+        rates.columns = ["10Y", "3M"]
+        spread = rates["10Y"] - rates["3M"]
+        cutoff = spread.index[-1] - timedelta(days=730)
 
-# --- 网络设置 ---
-with st.sidebar.expander("🌐 网络连接设置", expanded=False):
-    st.caption("无法连接Yahoo Finance时请填入代理，或留空使用**模拟演示模式**。")
-    proxy_url = st.text_input("HTTP代理地址", placeholder="例如 http://127.0.0.1:7890")
+        fed_funds = _fred_series("FEDFUNDS")
+        cpi = _fred_series("CPIAUCSL")
+        cpi_yoy = cpi.pct_change(12).dropna() * 100.0
+        sahm = _fred_series("SAHMREALTIME")
+        hy = _fred_series("BAMLH0A0HYM2")
+        nfci = _fred_series("NFCI")
+        hy_cutoff = hy.index[-1] - timedelta(days=365)
 
-# --- 宏观数据输入 ---
+        return {
+            "curve_inverted_24m": bool((spread.loc[cutoff:] < 0).any()),
+            "curve_spread": float(spread.iloc[-1]),
+            "real_fed_funds": float(fed_funds.iloc[-1] - cpi_yoy.iloc[-1]),
+            "sahm": float(sahm.iloc[-1]),
+            "hy_oas": float(hy.iloc[-1]),
+            "hy_low_52w": float(hy.loc[hy_cutoff:].min()),
+            "hy_delta_13w": float(hy.iloc[-1] - _prior_value(hy, 91)),
+            "nfci": float(nfci.iloc[-1]),
+            "nfci_delta_13w": float(nfci.iloc[-1] - _prior_value(nfci, 91)),
+        }, False
+    except Exception:
+        return fallback, True
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("1. 巴菲特指标 (Buffett Indicator)")
-st.sidebar.markdown("""
-[🔗 Wilshire 5000](https://sc.macromicro.me/series/616/wilshire5000) | [🔗 US GDP](https://www.macromicro.me/collections/2/us-gdp-relative/2/us-real-gdp)
-""", unsafe_allow_html=True)
 
-wilshire_5000 = st.sidebar.number_input("美股总市值 (Trillion $)", value=59.0, step=0.5)
-us_gdp = st.sidebar.number_input("美国 GDP (Trillion $)", value=29.0, step=0.1)
-buffett_ratio = (wilshire_5000 / us_gdp) * 100
-st.sidebar.caption(f"当前计算值: **{buffett_ratio:.1f}%**")
+REGIME_STYLE = {
+    "HEALTHY": ("🟢 HEALTHY", "#087f5b"),
+    "OVERHEATED": ("🟡 OVERHEATED", "#b7791f"),
+    "FRAGILE": ("🟠 FRAGILE", "#c05621"),
+    "BREAKDOWN": ("🔴 BREAKDOWN", "#c53030"),
+    "PANIC": ("🟣 PANIC", "#6b46c1"),
+    "SYSTEMIC": ("⚫ SYSTEMIC", "#30343b"),
+    "RECOVERY": ("🔵 RECOVERY", "#2b6cb0"),
+}
 
-st.sidebar.info("""
-**⚠️ 注意：GDP 数据通常每季度更新，存在滞后性。**
-**📊 历史参考阈值:**
-* **历史平均 (1950-2023)**: ~100%
-* **近10年平均**: ~150% (低利率环境推高)
-* **2000年 泡沫峰值**: ~140%
-* **2021年 历史峰值**: ~200% (极度高危)
-""")
+ACTION_ZH = {
+    "HEALTHY": "维持核心仓位与正常定投。",
+    "OVERHEATED": "估值昂贵但压力尚未确认：不追高；估值本身不是卖出信号。",
+    "FRAGILE": "维持核心仓位、不加杠杆，并保留 Crash Reserve。",
+    "BREAKDOWN": "控制高 Beta 风险；用 Escalation Gate 判断普通调整是否可能升级。",
+    "PANIC": "高波动叠加大回撤转为分批买入信号，而不是机械卖出信号。",
+    "SYSTEMIC": "系统性压力与衰退共振：继续慢速分批买入，不要一次打完预备资金。",
+    "RECOVERY": "恐慌回落且市场参与度修复：逐步投入最后一档预备资金。",
+}
 
-st.sidebar.subheader("2. 席勒市盈率 (Shiller PE)")
-st.sidebar.markdown("[🔗 Multpl Shiller PE](https://www.multpl.com/shiller-pe)", unsafe_allow_html=True)
-shiller_pe = st.sidebar.number_input("CAPE Ratio", value=40.0, step=0.1)
-st.sidebar.info("""
-**📊 历史参考阈值:**
-* **历史平均**: ~17.0
-* **近10年平均**: ~30.0
-* **1929年 大萧条**: 30.0
-* **2000年 互联网泡沫**: 44.2 (历史最高)
-* **2021年 疫情后**: 38.6
-""")
+STATUS_ICON = {
+    "Healthy": "🟢", "Normal": "🟢", "Loose/Normal": "🟢", "Not confirmed": "🟢",
+    "Elevated": "🟡", "Background risk": "🟡", "Watch": "🟡", "Labor warning": "🟠",
+    "Expensive": "🟠", "Rising pressure": "🟠", "Deteriorating": "🟠", "Stress": "🟠",
+    "Extreme": "🔴", "Tight": "🔴", "Broken": "🔴", "Confirmed stress": "🔴",
+    "Panic": "🟣", "Systemic": "⚫",
+}
 
-st.sidebar.subheader("3. 收益率曲线 (10Y-2Y)")
-st.sidebar.markdown("[🔗 CN.Investing 债券](https://cn.investing.com/rates-bonds/usa-government-bonds)",
-                    unsafe_allow_html=True)
-user_2y_yield = st.sidebar.number_input(
-    "2年期美债收益率 (%)",
-    value=4.20,
-    step=0.01,
-    help="输入2年期收益率，系统将自动对比10年期。"
+
+st.sidebar.title("🧭 模型输入")
+st.sidebar.markdown(f"[查看 GitHub 源码]({GITHUB_URL})")
+ticker = st.sidebar.selectbox("监测标的", ["VOO", "QQQ"])
+
+with st.sidebar.expander("网络设置", expanded=False):
+    proxy_url = st.text_input("HTTP 代理（可选）", value="")
+
+market = get_market_snapshot(ticker, proxy_url)
+macro, macro_fallback = get_macro_snapshot()
+
+st.sidebar.subheader("估值（手动校准）")
+cape = st.sidebar.number_input("Shiller CAPE", min_value=0.0, value=40.0, step=0.1)
+buffett = st.sidebar.number_input("Buffett Indicator (%)", min_value=0.0, value=200.0, step=1.0)
+st.sidebar.caption("CAPE 与 Buffett 属于同一估值风险源，模型只计一票。")
+
+with st.sidebar.expander("宏观与信用输入", expanded=False):
+    st.caption("默认值由 FRED 自动读取；可用最新发布值覆盖。")
+    st.metric("当前 10Y-3M", f"{macro['curve_spread']:+.2f}%")
+    curve_inverted = st.checkbox("过去24个月曾持续倒挂", value=macro["curve_inverted_24m"])
+    real_fed_funds = st.number_input("Real Fed Funds (%)", value=float(macro["real_fed_funds"]), step=0.05)
+    sahm = st.number_input("Sahm Rule", value=float(macro["sahm"]), step=0.01)
+    hy_oas = st.number_input("HY OAS (%)", value=float(macro["hy_oas"]), step=0.05)
+    hy_low = st.number_input("HY OAS 52周低点 (%)", value=float(macro["hy_low_52w"]), step=0.05)
+    hy_delta = st.number_input("HY OAS 13周变化 (百分点)", value=float(macro["hy_delta_13w"]), step=0.05)
+    nfci = st.number_input("NFCI", value=float(macro["nfci"]), step=0.05)
+    nfci_delta = st.number_input("NFCI 13周变化", value=float(macro["nfci_delta_13w"]), step=0.05)
+
+already_deployed = st.sidebar.slider("Crash Reserve 已投入", 0, 100, 0, 5, format="%d%%")
+
+inputs = MarketInputs(
+    ticker=ticker,
+    current_price=market.current_price,
+    peak_52w=market.peak_52w,
+    sma_50=market.sma_50,
+    sma_200=market.sma_200,
+    volatility=market.volatility,
+    volatility_peak_since_price_peak=market.volatility_peak_since_price_peak,
+    cape=cape,
+    buffett_ratio=buffett,
+    curve_inverted_24m=curve_inverted,
+    real_fed_funds=real_fed_funds,
+    sahm_rule=sahm,
+    hy_oas=hy_oas,
+    hy_oas_low_52w=hy_low,
+    hy_oas_delta_13w=hy_delta,
+    nfci=nfci,
+    nfci_delta_13w=nfci_delta,
+    equal_weight_ratio=market.equal_weight_ratio,
+    equal_weight_sma_50=market.equal_weight_sma_50,
+    semi_ratio=market.semi_ratio,
+    semi_ratio_sma_50=market.semi_ratio_sma_50,
 )
-st.sidebar.info("""
-**📊 历史参考阈值:**
-* **正常状态**: +0.8% ~ +2.0%
-* **倒挂预警 (< 0%)**: 2000, 2007, 2019, 2022 均出现
-* **解挂风险 (倒挂后回升至 > 0%)**: 最危险时刻。
-""")
+assessment = assess_market(inputs, market.volatility_percentile_5y)
 
-st.sidebar.subheader("4. 恐慌与贪婪指数")
-st.sidebar.markdown("[🔗 CNN Fear & Greed](https://edition.cnn.com/markets/fear-and-greed)", unsafe_allow_html=True)
-fear_greed = st.sidebar.slider("Fear & Greed Index (0-100)", 0, 100, 45)
-st.sidebar.caption("极度贪婪 (>80) 往往是短期顶部信号。")
+st.title(f"US Market Regime — {ticker}")
+st.caption("v2.2 · Risk Build-up → Escalation Gate → Panic Buy Engine")
 
+if market.is_mock:
+    st.warning("Yahoo Finance 连接失败：价格、波动率和趋势正在使用模拟数据，不能用于投资决策。")
+if macro_fallback:
+    st.warning("FRED 连接失败：宏观栏位正在使用备用示例值，请在侧边栏手动校准。")
 
-# ==========================================
-# 4. 风险评分模型
-# ==========================================
-def calculate_risk_score(current_price, sma_200, us_10y, us_2y, buffett_val, shiller_val, fear_val, weights):
-    """
-    计算综合风险评分，支持动态权重
-    """
-    score = 0
-    details = {}
-
-    # --- 因子 1: 巴菲特指标 ---
-    w_buffett = weights['buffett']
-    if buffett_val > 200:
-        b_risk = 100
-    elif buffett_val > 180:
-        b_risk = 90
-    elif buffett_val > 150:
-        b_risk = 75
-    elif buffett_val > 120:
-        b_risk = 50
-    else:
-        b_risk = 25
-    score += b_risk * w_buffett
-    details['Buffett'] = (b_risk, buffett_val)
-
-    # --- 因子 2: Shiller PE ---
-    w_shiller = weights['shiller']
-    if shiller_val > 40:
-        s_risk = 100
-    elif shiller_val > 35:
-        s_risk = 90
-    elif shiller_val > 30:
-        s_risk = 70
-    elif shiller_val > 25:
-        s_risk = 50
-    else:
-        s_risk = 20
-    score += s_risk * w_shiller
-    details['Shiller'] = (s_risk, shiller_val)
-
-    # --- 因子 3: 收益率曲线 ---
-    w_yield = weights['yield']
-    spread = us_10y - us_2y
-    # 修改逻辑以适配历史数据特性：
-    # 2000年：倒挂 (-0.4) -> 危险
-    # 2007年：刚刚解挂 (+0.4) -> 极度危险 (往往倒挂回正才是衰退开始)
-    # 2022年：平坦 (+0.8) -> 警示
-    if spread < -0.5:
-        y_risk = 80
-        status = "深度倒挂"
-    elif spread < 0:
-        y_risk = 60
-        status = "轻度倒挂"
-    elif spread >= 0 and spread < 0.5:
-        # 这是历史上最危险的时刻（解挂期）
-        y_risk = 70
-        status = "解挂/平坦(危)"
-    else:
-        y_risk = 30
-        status = "正常"
-    score += y_risk * w_yield
-    details['Yield'] = (y_risk, spread, status)
-
-    # --- 因子 4: 200日均线乖离率 ---
-    w_tech = weights['technical']
-    if sma_200 and not np.isnan(sma_200) and sma_200 != 0:
-        deviation = (current_price - sma_200) / sma_200
-        deviation_pct = deviation * 100
-    else:
-        deviation_pct = 0
-
-    if deviation_pct > 25:
-        m_risk = 100
-    elif deviation_pct > 20:
-        m_risk = 85
-    elif deviation_pct > 15:
-        m_risk = 65
-    elif deviation_pct > 5:
-        m_risk = 40
-    elif deviation_pct < -10:
-        m_risk = 10
-    else:
-        m_risk = 20
-    score += m_risk * w_tech
-    details['Technical'] = (m_risk, deviation_pct)
-
-    # --- 因子 5: 恐慌贪婪指数 ---
-    w_sentiment = weights['sentiment']
-    if fear_val > 80:
-        f_risk = 100
-    elif fear_val > 60:
-        f_risk = 70
-    elif fear_val < 20:
-        f_risk = 0
-    else:
-        f_risk = 40
-    score += f_risk * w_sentiment
-    details['Sentiment'] = (f_risk, fear_val)
-
-    return score, details
-
-
-# ==========================================
-# 5. 历史对比数据 (NEW FEATURE)
-# ==========================================
-def get_historical_benchmarks():
-    """
-    返回历史上三次大崩盘前夕的宏观数据快照。
-    注意：为了计算方便，这里直接构造模拟的 Price/SMA 使得乖离率符合当时情况。
-    """
-    benchmarks = {
-        "2000 互联网泡沫 (Top)": {
-            "desc": "March 2000",
-            # 当时数据: 巴菲特指标~140%, Shiller PE~44, 利差倒挂 -0.4%
-            # 标普500乖离率约 10-15% (纳指则高得多)
-            "buffett": 145.0,
-            "shiller": 44.2,
-            "us_10y": 6.2,
-            "us_2y": 6.6,  # Spread -0.4
-            "fear": 90,  # 极度贪婪
-            # 构造 15% 乖离率 (115/100)
-            "mock_price": 115, "mock_sma": 100
-        },
-        "2008 次贷危机 (Pre-Crash)": {
-            "desc": "Oct 2007",
-            # 当时数据: 巴菲特指标~105%, Shiller PE~27, 利差回正 +0.4% (最危险信号)
-            # 标普500乖离率约 6-8%
-            "buffett": 110.0,
-            "shiller": 27.5,
-            "us_10y": 4.6,
-            "us_2y": 4.2,  # Spread +0.4 (刚刚解挂)
-            "fear": 75,  # 贪婪
-            # 构造 8% 乖离率
-            "mock_price": 108, "mock_sma": 100
-        },
-        "2022 加息熊市 (Top)": {
-            "desc": "Jan 2022",
-            # 当时数据: 巴菲特指标~200% (ATH), Shiller PE~38
-            # 利差 +0.8% (后续4月才倒挂), 乖离率 ~10%
-            "buffett": 195.0,
-            "shiller": 38.3,
-            "us_10y": 1.6,
-            "us_2y": 0.8,  # Spread +0.8
-            "fear": 75,
-            # 构造 12% 乖离率
-            "mock_price": 112, "mock_sma": 100
-        }
-    }
-    return benchmarks
-
-
-# ==========================================
-# 6. 主程序逻辑
-# ==========================================
-
-# 获取数据
-df, price, sma200, yield_10y, is_mock = get_market_data(ticker_symbol, proxy=proxy_url)
-
-# --- UI: 标题区 ---
-st.title(f"🚨 Wall Street Quant: {ticker_symbol} 崩盘风险监测仪")
-
-if is_mock:
-    st.warning("⚠️ **演示模式**：无法连接数据源，当前使用模拟数据。")
-else:
-    st.success("✅ **实时连接**：数据源正常。")
-
+regime_label, regime_color = REGIME_STYLE[assessment.regime]
 st.markdown(
-    f"**当前标的**: {ticker_symbol} | **最新价格**: ${price:.2f} | **10年期美债收益率**: {yield_10y:.2f}% (自动获取)")
+    f'<div class="regime-box" style="background:{regime_color}"><h2>{regime_label}</h2>'
+    f'<div>{ACTION_ZH[assessment.regime]}</div></div>',
+    unsafe_allow_html=True,
+)
+
+top1, top2, top3, top4 = st.columns(4)
+top1.metric("最新价格", f"${market.current_price:,.2f}")
+top2.metric("52周回撤", f"{assessment.drawdown_pct:.1f}%")
+vol_name = "VIX" if ticker == "VOO" else "VXN"
+top3.metric(vol_name, f"{market.volatility:.1f}", assessment.volatility_status)
+top4.metric("5年波动率百分位", f"P{market.volatility_percentile_5y:.0f}")
+
+st.subheader("五模块状态（不计算简单平均总分）")
+module_cols = st.columns(5)
+for column, (name, result) in zip(module_cols, assessment.modules.items()):
+    with column:
+        icon = STATUS_ICON.get(result.status, "⚪")
+        st.metric(name, f"{icon} {result.status}", f"诊断值 {result.score}/100", delta_color="off")
+        st.caption(result.detail)
+
+left, right = st.columns(2)
+with left:
+    st.subheader("Escalation Gate")
+    st.caption("仅在指数从52周高点回撤至少10%后启用；它判断调整是否可能升级，而不是预测顶部。")
+    if assessment.escalation_active:
+        st.info(f"**{assessment.escalation_status}** · 压力信号 {assessment.escalation_count}/3")
+    else:
+        st.info("**未启用** · 当前回撤尚未达到 -10%")
+    escalation_rows = [
+        {"信号": "过去24个月10Y-3M倒挂", "触发": "是" if assessment.escalation_signals["Yield curve"] else "否"},
+        {"信号": "Real Fed Funds ≥ 1.5%", "触发": "是" if assessment.escalation_signals["Real rates"] else "否"},
+        {"信号": "HY OAS较52周低点扩大≥200bp", "触发": "是" if assessment.escalation_signals["Credit"] else "否"},
+    ]
+    st.dataframe(pd.DataFrame(escalation_rows), hide_index=True, width="stretch")
+
+with right:
+    st.subheader("Panic Buy Engine")
+    low, high = assessment.buy_tranche
+    remaining = max(0, 100 - already_deployed)
+    deploy_low = min(low, remaining)
+    deploy_high = min(high, remaining)
+    st.info(f"**当前阶段：{assessment.buy_stage}**")
+    if high > 0 and remaining > 0:
+        tranche_text = f"{deploy_low}%" if deploy_low == deploy_high else f"{deploy_low}–{deploy_high}%"
+        st.metric("本档建议投入（占 Crash Reserve）", tranche_text)
+    elif remaining == 0:
+        st.metric("剩余 Crash Reserve", "0%")
+    else:
+        st.metric("本档建议投入", "0%")
+    if assessment.recession_modifier:
+        st.warning("衰退/信用确认正在减慢买入速度；高恐慌并不等于当天见底。")
+    st.caption("每档比例针对预先独立留出的 Crash Reserve，不是整个投资组合。")
+
+st.subheader("Recovery 确认")
+recovery_cols = st.columns(3)
+for column, (name, active) in zip(recovery_cols, assessment.recovery_signals.items()):
+    column.metric(name, "✅ 满足" if active else "— 未满足")
+st.caption("大回撤期间满足3项中的2项，才进入 Recovery 并考虑投入最后25–30%。")
+
+st.subheader(f"{ticker} 价格与趋势")
+chart = go.Figure()
+history = market.price_history.tail(504)
+chart.add_trace(go.Scatter(x=history.index, y=history["Close"], name=ticker, line=dict(color="#4da6ff", width=2)))
+chart.add_trace(go.Scatter(x=history.index, y=history["SMA_50"], name="50DMA", line=dict(color="#f6c85f", width=1.5)))
+chart.add_trace(go.Scatter(x=history.index, y=history["SMA_200"], name="200DMA", line=dict(color="#ed553b", width=1.5)))
+chart.update_layout(height=430, template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20))
+st.plotly_chart(chart, width="stretch")
+
+with st.expander("查看 VOO / QQQ 独立恐慌阈值"):
+    rows = []
+    for asset, values in VOLATILITY_THRESHOLDS.items():
+        rows.append({
+            "标的": asset,
+            "Watch": values[0],
+            "Stress": values[1],
+            "Panic": values[2],
+            "Extreme": values[3],
+            "Systemic": values[4],
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    st.caption("VOO 使用 VIX；QQQ 使用 VXN。最终判断同时采用绝对阈值与5年滚动百分位。")
+
 st.markdown("---")
-
-if df is not None:
-    # 1. 计算当前风险
-    final_risk_score, risk_details = calculate_risk_score(
-        price, sma200, yield_10y, user_2y_yield,
-        buffett_ratio, shiller_pe, fear_greed,
-        user_weights
-    )
-
-    # 2. 计算历史基准风险 (使用当前用户权重回测历史)
-    historical_data = get_historical_benchmarks()
-    historical_scores = {}
-
-    for era_name, data in historical_data.items():
-        h_score, _ = calculate_risk_score(
-            data['mock_price'], data['mock_sma'],
-            data['us_10y'], data['us_2y'],
-            data['buffett'], data['shiller'], data['fear'],
-            user_weights  # 关键：使用用户设定的权重
-        )
-        historical_scores[era_name] = h_score
-
-    # --- 第一行: 仪表盘与建议 ---
-    col1, col2 = st.columns([1, 2])
-    with col1:
-        fig_gauge = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=final_risk_score,
-            title={'text': f"{ticker_symbol} 崩盘风险指数"},
-            gauge={
-                'axis': {'range': [0, 100]},
-                'bar': {'color': "rgba(0,0,0,0)"},  # 隐藏默认指针，如果你想自定义的话，或者保留
-                'steps': [
-                    {'range': [0, 40], 'color': '#00cc96'},
-                    {'range': [40, 70], 'color': '#ffa15a'},
-                    {'range': [70, 100], 'color': '#ef553b'}
-                ],
-                'threshold': {
-                    'line': {'color': "black", 'width': 4},
-                    'thickness': 0.75,
-                    'value': final_risk_score
-                }
-            }
-        ))
-
-        # 尝试在 Gauge 下方添加简单的历史标注文本
-        # 由于Plotly Gauge添加多指针很麻烦，我们在下方用Bar Chart做对比更直观
-        fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
-        st.plotly_chart(fig_gauge, width="stretch")
-
-    with col2:
-        st.subheader("🤖 量化建议")
-        if final_risk_score > 80:
-            bg_color, title_text = "#ef553b", "极高风险 (Extreme Risk)"
-            advice = f"模型显示 {ticker_symbol} 极度过热。建议大幅降低仓位，购买Put对冲，持有现金。"
-        elif final_risk_score > 60:
-            bg_color, title_text = "#ffa15a", "风险累积 (Elevated Risk)"
-            advice = f"风险正在积聚。{ticker_symbol} 波动可能加剧，停止追高，考虑适当对冲，收紧止损线。"
-        else:
-            bg_color, title_text = "#00cc96", "相对安全 (Safe Zone)"
-            advice = "市场处于正常波动范围。维持定投计划，关注长期价值。"
-
-        st.markdown(f"""
-        <div style="background-color: {bg_color}; padding: 20px; border-radius: 10px; color: white;">
-            <h3 style="margin:0;">{title_text}</h3>
-            <p style="margin-top:10px;">{advice}</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        # 新增：简易对比文本
-        st.markdown("##### 🆚 历史对比参考")
-        st.markdown("如果用当前的权重设置，历史大顶的风险分数为：")
-
-        # 简单展示一行小字对比
-        hist_text_cols = st.columns(3)
-        idx = 0
-        for name, score in historical_scores.items():
-            year_label = name.split(" ")[0]  # 提取 2000, 2008 等
-            with hist_text_cols[idx]:
-                st.metric(label=year_label + " 峰值", value=f"{score:.0f}")
-            idx += 1
-
-    # --- 第二行: 因子详情 ---
-    st.subheader("🔍 风险因子分解 (含自定义权重)")
-
-
-    def get_label(name, key):
-        return f"{name} (权重: {int(user_weights[key] * 100)}%)"
-
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-
-    with m1:
-        st.metric(
-            label=get_label("巴菲特指标", 'buffett'),
-            value=f"{risk_details['Buffett'][1]:.1f}%",
-            delta=f"Risk: {risk_details['Buffett'][0]}",
-            delta_color="inverse"
-        )
-    with m2:
-        st.metric(
-            label=get_label("席勒市盈率", 'shiller'),
-            value=f"{risk_details['Shiller'][1]:.1f}",
-            delta=f"Risk: {risk_details['Shiller'][0]}",
-            delta_color="inverse"
-        )
-    with m3:
-        spread_val = risk_details['Yield'][1]
-        status_text = risk_details['Yield'][2]
-        st.metric(
-            label=get_label("10Y-2Y 利差", 'yield'),
-            value=f"{spread_val:.2f}%",
-            delta=status_text,
-            delta_color="off"
-        )
-    with m4:
-        st.metric(
-            label=get_label("均线乖离率", 'technical'),
-            value=f"{risk_details['Technical'][1]:.1f}%",
-            delta=f"Risk: {risk_details['Technical'][0]}",
-            delta_color="inverse"
-        )
-    with m5:
-        st.metric(
-            label=get_label("贪婪指数", 'sentiment'),
-            value=f"{risk_details['Sentiment'][1]}",
-            delta=f"Risk: {risk_details['Sentiment'][0]}",
-            delta_color="inverse"
-        )
-
-    st.markdown("---")
-
-    # ==========================================
-    # 新增模块：历史风险对比图表
-    # ==========================================
-    st.subheader("⚔️ 跨时代风险大比拼 (Stress Test)")
-    st.caption("基于你当前设定的权重，对比**当前市场**与**历史上三次著名崩盘前夜**的风险评分。")
-
-    # 准备绘图数据
-    comparison_names = ["当前 (Now)"] + list(historical_scores.keys())
-    comparison_scores = [final_risk_score] + list(historical_scores.values())
-
-    # 颜色逻辑：根据分数变色
-    bar_colors = []
-    for s in comparison_scores:
-        if s > 80:
-            bar_colors.append('#ef553b')  # Red
-        elif s > 60:
-            bar_colors.append('#ffa15a')  # Orange
-        else:
-            bar_colors.append('#00cc96')  # Green
-
-    # 当前选中的高亮边框
-    border_colors = ['white'] + ['rgba(0,0,0,0)'] * 3
-    border_widths = [2] + [0] * 3
-
-    fig_hist = go.Figure(go.Bar(
-        x=comparison_scores,
-        y=comparison_names,
-        orientation='h',
-        text=[f"{s:.1f}" for s in comparison_scores],
-        textposition='auto',
-        marker=dict(color=bar_colors, line=dict(color=border_colors, width=border_widths))
-    ))
-
-    fig_hist.update_layout(
-        height=300,
-        margin=dict(l=20, r=20, t=20, b=20),
-        template="plotly_dark",
-        xaxis=dict(range=[0, 100], title="风险评分 (0-100)"),
-        yaxis=dict(autorange="reversed")  # 让当前排在最上面
-    )
-
-    # 添加参考竖线
-    fig_hist.add_vline(x=60, line_width=1, line_dash="dash", line_color="orange", annotation_text="警告线")
-    fig_hist.add_vline(x=80, line_width=1, line_dash="dash", line_color="red", annotation_text="崩盘线")
-
-    st.plotly_chart(fig_hist, width="stretch")
-
-    with st.expander("ℹ️ 查看历史数据来源说明"):
-        st.markdown("""
-        * **2000 互联网泡沫**: 选取 2000年3月 数据。特征是极高的 Shiller PE (44+) 和 倒挂的利差。
-        * **2008 次贷危机**: 选取 2007年10月 数据。特征是股市见顶，利差刚从倒挂恢复变正（经典的衰退信号）。
-        * **2022 加息熊市**: 选取 2022年1月 数据。特征是巴菲特指标创历史新高 (~200%)。
-        * **计算逻辑**: 使用您在侧边栏调整的权重，实时计算这些历史时刻如果套用当前模型会得多少分。
-        """)
-
-    st.markdown("---")
-
-    # --- 第三行: 图表 ---
-    st.subheader(f"📈 {ticker_symbol} 价格 vs 200日均线")
-    fig_chart = go.Figure()
-    fig_chart.add_trace(go.Candlestick(
-        x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name=ticker_symbol
-    ))
-    fig_chart.add_trace(go.Scatter(
-        x=df.index, y=df['SMA_200'], mode='lines', name='SMA 200', line=dict(color='orange', width=2)
-    ))
-    fig_chart.update_layout(height=450, xaxis_rangeslider_visible=False, template="plotly_dark")
-    st.plotly_chart(fig_chart, width="stretch")
+st.caption(
+    "数据：Yahoo Finance（价格、VIX/VXN、相对强弱）与 FRED（利率、Sahm、HY OAS、NFCI）。"
+    "模型仍需完整的1995–2026日频回测与真实成分股 breadth 数据校准；本项目仅供研究，不构成投资建议。"
+)

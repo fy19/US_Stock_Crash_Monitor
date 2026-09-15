@@ -1,76 +1,103 @@
-##### Disclaimer: The tool is written in Gemini3 and currently has the best compatibility with VOO (S&P 500); the thresholds for each indicator are based on the thresholds before the crashes in 2000, 2008, and 2021.
-# **🚨 Wall Street Quant: US Stock Crash Monitor**
+# US Market Regime Monitor v2.2
 
-**A full-stack quantitative analysis tool built with Python and Streamlit. It integrates macroeconomic indicators and technical analysis to monitor crash risks for the S\&P 500 (VOO) and Nasdaq 100 (QQQ) in real-time.**
+A Streamlit dashboard that classifies the market regime for VOO (S&P 500) and QQQ (Nasdaq-100).
 
-### [**🇨🇳 View Chinese Version / 中文文档**](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/README.md)
+Version 2.2 removes the misleading single “Crash Risk Score” and the rule that higher stress should automatically lead to more selling. It separates risk build-up from an active drawdown and from contrarian buying during panic.
 
-**Note:** This tool was developed with the assistance of Gemini. Currently, it is best optimized for **VOO (S\&P 500\)**.
+## Decision architecture
 
-## **📖 Introduction**
+1. **Risk Build-up Engine** — Is the market expensive, tightening and internally fragile?
+2. **Escalation Gate** — Once drawdown reaches 10%, is the correction more likely to become a bear market?
+3. **Panic Buy Engine** — During high volatility and a large drawdown, how much of a predefined reserve should be deployed?
 
-In financial markets, single indicators can often be deceptive. This project aims to build a **Multi-factor Risk-Weighted Model**. By integrating Wall Street's most-watched macro valuation metrics (e.g., the Buffett Indicator, Shiller PE) with technical indicators (e.g., Moving Average Deviation, Treasury Yield Curve), it calculates a comprehensive **"Crash Risk Score."**
+## Five modules
 
-The tool helps investors stay rational during periods of extreme market euphoria and identify opportunities during extreme panic, avoiding the "herd mentality."
-![](https://github.com/middletoo/US_Stock_Crash_Monitor/blob/main/main2.png?raw=true)
-## **✨ Core Features & Advantages**
+| Module | Main inputs | Purpose |
+|---|---|---|
+| Valuation | CAPE, Buffett Indicator | Long-horizon valuation background; correlated measures get one vote |
+| Recession | 10Y-3M, Sahm, credit/conditions confirmation | Separates a labor warning from recession confirmation |
+| Monetary/Liquidity | Real Fed Funds, NFCI and 13-week change | Captures tightening bears such as 2018 and 2022 |
+| Fragility | 50/200DMA and equal-weight relative strength; semiconductors for QQQ | Measures internal market deterioration |
+| Panic/Stress | VIX/VXN, drawdown and HY OAS | Confirms stress and finds contrarian buying conditions |
 
-* **Multi-dimensional Quantitative Model**: More than just price tracking; it's a comprehensive scoring system combining **Macro**, **Valuation**, **Sentiment**, and **Technical** factors.  
-* **Dual Asset Switching**: Supports seamless switching between **VOO (S\&P 500\)** and **QQQ (Nasdaq 100\)**, with independent analysis for assets with different volatility profiles.  
-* **High Customizability**:  
-  * **Weight Adjustment**: Users can dynamically adjust the weight of each indicator based on the current market environment (e.g., high-interest rate environments or AI bubbles).  
-  * **Manual Calibration**: For non-real-time API data like GDP, a sidebar is provided for manual input with links to authoritative data sources to ensure precision.  
-* **Robust Design**: Built-in network fault tolerance. If the Yahoo Finance API fails to connect, it automatically switches to a **Demo Mode** to prevent the application from crashing.  
-* **Historical Comparison**: Provides threshold references for key historical crashes (e.g., 2000, 2008, 2021\) to learn from the past.  
-* **Interactive Charts**: High-performance interactive K-line charts and dashboards rendered using Plotly.
+The five modules are not averaged into a single score. Correlated indicators such as CAPE and the Buffett Indicator do not receive duplicate votes.
 
-## **🛠️ Monitoring Indicator System**
+## Escalation Gate
 
-The model calculates risk based on 5 core factors (default weights are adjustable):
+The gate activates only after a **10% drawdown** from the 52-week high. It then checks:
 
-1. **Buffett Indicator**: Total US Market Cap / US GDP. Measures the overall degree of the stock market bubble.  
-2. **Shiller PE (CAPE)**: Inflation-adjusted cyclically adjusted price-to-earnings ratio; a valuation benchmark that spans bull and bear markets.  
-3. **Treasury Yield Curve (10Y-2Y Spread)**: A famous recession warning indicator, specifically monitoring the high-risk moment when the curve "uninverts" after a period of inversion.  
-4. **200-Day Moving Average Deviation**: Measures how much the short-term price deviates from the long-term trend to determine if an asset is severely overbought.  
-5. **Fear & Greed Index**: A contrarian indicator; extreme greed often signals a short-term market top.
+- a 10Y-3M inversion within the prior 24 months;
+- Real Fed Funds ≥ 1.5%;
+- HY OAS at least 200bp above its 52-week low.
 
-## **🚀 Quick Start**
+| Active signals | Classification |
+|---:|---|
+| 0 | Ordinary correction more likely |
+| 1 | Watch |
+| 2 | Bear Escalation |
+| 3 | Severe Bear Risk |
 
-### **Prerequisites**
+These are v1 rules awaiting full backtest calibration, not event probabilities.
 
-* Python 3.8 or higher
+## Separate VOO and QQQ thresholds
 
-### **Installation Steps**
+VOO uses VIX. QQQ uses VXN and additionally monitors QQEW/QQQ and SMH/QQQ.
 
-1. **Clone the Repository**  
-   git clone \[https://github.com/middletoo/US\_Stock\_Crash\_Monitor.git\](https://github.com/middletoo/US\_Stock\_Crash\_Monitor.git)  
-   cd US\_Stock\_Crash\_Monitor
+| Asset | Normal | Watch | Stress | Panic | Extreme | Systemic |
+|---|---:|---:|---:|---:|---:|---:|
+| VOO / VIX | <20 | 20–25 | 25–30 | 30–40 | 40–60 | ≥60 |
+| QQQ / VXN | <25 | 25–30 | 30–35 | 35–45 | 45–60 | ≥60 |
 
-2. Install Dependencies  
-   It is recommended to use a virtual environment:  
-   pip install streamlit yfinance pandas numpy plotly
+The live model combines these absolute thresholds with a five-year rolling percentile.
 
-3. **Run the Application**  
-   streamlit run app.py
+## Panic Buy Engine
 
-4. Access the App  
-   The browser will automatically open http://localhost:8501.
-5. Configuration parameters (Important)  
-   After launching, please follow the prompts in the left sidebar of the application page, click the link to obtain the latest GDP, PE, and other values, and manually enter them for accurate analysis.
-   
-## **⚠️ Limitations**
+All percentages refer to a separately predefined **Crash Reserve**, not the entire portfolio.
 
-* **Data Lag**: Some macro data (like GDP) is updated quarterly and cannot reflect real-time intraday changes. Thus, the Buffett Indicator is better for long-term trends than short-term timing.  
-* **Linear Weighting Flaw**: The current model uses linear weighted summation, whereas real market crashes are often non-linear chain reactions triggered by "Black Swan" events.  
-* **API Constraints**: Relies on the free yfinance interface, which may have rate limits or connectivity issues in certain regions (proxy settings are built-in).  
-* **Subjective Factors**: While the model is quantitative, inputs (like GDP forecasts) and weight settings still involve user subjectivity.
+| Stage | Core condition | Reserve tranche |
+|---|---|---:|
+| Initial Correction | 10–15% drawdown + Stress | 10–15% |
+| Deep Correction | 15–20% drawdown + Panic | 20% |
+| Bear Market | 20–30% drawdown + Panic | 25% |
+| Extreme Panic | VIX≥40 / VXN≥45 plus large drawdown | 15–20% |
+| Recovery | Two of three recovery conditions | 25–30% |
 
-## **🛡️ Disclaimer**
+When a Sahm labor warning is confirmed by credit or NFCI stress, the panic tranche slows to 10–15% to avoid exhausting reserves too early in a recessionary bear market.
 
-**This project is for programming education and quantitative research purposes only. It does not constitute any investment advice.**
+Recovery requires two of: volatility having reached Panic during the current drawdown and then falling at least 20% from that peak, HY OAS no longer widening, and improving trend/equal-weight participation.
 
-* Financial markets involve significant risk; invest with caution.  
-* The "Risk Score" provided by this tool is based on historical statistical data; past performance does not guarantee future results.  
-* The author is not responsible for any financial losses resulting from the use of this code.
+## Data
 
-**If you find this project helpful, please give it a ⭐️ Star\!**
+- Yahoo Finance: VOO/QQQ prices, VIX/VXN, RSP/SPY, QQEW/QQQ and SMH/QQQ.
+- FRED: DGS10, DGS3MO, FEDFUNDS, CPIAUCSL, SAHMREALTIME, BAMLH0A0HYM2 and NFCI.
+- CAPE and the Buffett Indicator remain manual inputs so low-frequency data is not presented as real-time.
+
+The dashboard clearly marks demo/fallback data. Do not use a fallback result for an investment decision.
+
+## Install and run
+
+```bash
+git clone https://github.com/fy19/US_Stock_Crash_Monitor.git
+cd US_Stock_Crash_Monitor
+python -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+Run the model tests:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+## Current limitations
+
+- Fragility uses ETF trend and equal-weight relative strength as breadth proxies, not true constituent breadth.
+- CAPE/Buffett 0–100 readings are transparent historical-range approximations; a full backtest should use point-in-time percentiles.
+- A daily, look-ahead-free 1995–2026 backtest has not yet been completed.
+- Free market and macro data may be delayed or revised.
+
+The next milestone is Daily Backtest v1 with Precision, Recall, False Positive rate, Lead Time, Max Drawdown, CAGR and Sortino, calibrated separately for VOO and QQQ.
+
+## Disclaimer
+
+This project is for programming education and quantitative research only. It is not investment advice, and historical relationships do not guarantee future results.
