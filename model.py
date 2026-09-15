@@ -14,6 +14,13 @@ VOLATILITY_THRESHOLDS = {
     "QQQ": (25.0, 30.0, 35.0, 45.0, 60.0),
 }
 
+# QQQ normally moves more than VOO, so the same absolute drawdown must not
+# automatically consume the same Crash Reserve tranche.
+BUY_DRAWDOWN_THRESHOLDS = {
+    "VOO": (-10.0, -15.0, -20.0),
+    "QQQ": (-12.0, -20.0, -30.0),
+}
+
 
 @dataclass(frozen=True)
 class MarketInputs:
@@ -34,8 +41,12 @@ class MarketInputs:
     hy_oas_delta_13w: float
     nfci: float
     nfci_delta_13w: float
-    equal_weight_ratio: float
-    equal_weight_sma_50: float
+    cap_equal_ratio: float
+    cap_equal_sma_50: float
+    breadth_50_pct: float | None = None
+    breadth_200_pct: float | None = None
+    breadth_is_current_constituents: bool = True
+    mega_cap_top10_pct: float | None = None
     semi_ratio: float | None = None
     semi_ratio_sma_50: float | None = None
 
@@ -57,6 +68,7 @@ class Assessment:
     escalation_count: int
     escalation_status: str
     escalation_signals: Dict[str, bool]
+    fragility_signals: Dict[str, bool]
     volatility_status: str
     volatility_percentile: float
     recovery_signals: Dict[str, bool]
@@ -155,12 +167,31 @@ def _recession(inputs: MarketInputs) -> ModuleResult:
     return ModuleResult(15, "Not confirmed", "No confirmed labor/credit recession signal")
 
 
-def _fragility(inputs: MarketInputs) -> ModuleResult:
+def _fragility(inputs: MarketInputs) -> Tuple[ModuleResult, Dict[str, bool]]:
+    breadth_floor_50 = 40.0 if inputs.ticker == "QQQ" else 45.0
+    breadth_floor_200 = 50.0
+    breadth_available = inputs.breadth_50_pct is not None and inputs.breadth_200_pct is not None
+    breadth_weak = bool(
+        breadth_available
+        and (
+            inputs.breadth_50_pct < breadth_floor_50
+            or inputs.breadth_200_pct < breadth_floor_200
+        )
+    )
+
+    # Cap/equal leadership and Top-10 weight describe the same concentration
+    # risk source. They are deliberately combined into one vote.
+    concentration_weak = inputs.cap_equal_ratio > inputs.cap_equal_sma_50 * 1.005
+    if inputs.ticker == "QQQ" and inputs.mega_cap_top10_pct is not None:
+        concentration_weak = concentration_weak or inputs.mega_cap_top10_pct >= 50.0
+
     votes = {
         "price_below_50dma": inputs.current_price < inputs.sma_50,
         "price_below_200dma": inputs.current_price < inputs.sma_200,
-        "equal_weight_weak": inputs.equal_weight_ratio < inputs.equal_weight_sma_50,
+        "concentration_narrowing": concentration_weak,
     }
+    if breadth_available:
+        votes["breadth_weak"] = breadth_weak
     if inputs.ticker == "QQQ" and inputs.semi_ratio is not None and inputs.semi_ratio_sma_50 is not None:
         votes["semiconductors_weak"] = inputs.semi_ratio < inputs.semi_ratio_sma_50
 
@@ -168,8 +199,8 @@ def _fragility(inputs: MarketInputs) -> ModuleResult:
     score = round(broken / len(votes) * 100.0)
     status = "Broken" if score >= 75 else "Deteriorating" if score >= 50 else "Watch" if score > 0 else "Healthy"
     labels = [name for name, active in votes.items() if active]
-    detail = ", ".join(labels) if labels else "Trend and equal-weight participation are healthy"
-    return ModuleResult(score, status, detail)
+    detail = ", ".join(labels) if labels else "Trend, breadth and participation are healthy"
+    return ModuleResult(score, status, detail), votes
 
 
 def _panic(inputs: MarketInputs, dd: float, live_vol_percentile: float | None) -> Tuple[ModuleResult, str, float]:
@@ -213,7 +244,8 @@ def _recovery(inputs: MarketInputs, dd: float) -> Tuple[Dict[str, bool], bool]:
     credit_stable = inputs.hy_oas_delta_13w <= 0.0
     participation_improving = (
         inputs.current_price >= inputs.sma_50
-        and inputs.equal_weight_ratio >= inputs.equal_weight_sma_50
+        and inputs.cap_equal_ratio <= inputs.cap_equal_sma_50
+        and (inputs.breadth_50_pct is None or inputs.breadth_50_pct >= 50.0)
     )
     signals = {
         "Volatility down ≥20% from peak": vol_reversal,
@@ -223,25 +255,28 @@ def _recovery(inputs: MarketInputs, dd: float) -> Tuple[Dict[str, bool], bool]:
     return signals, dd <= -10.0 and sum(signals.values()) >= 2
 
 
-def _buy_decision(
-    inputs: MarketInputs,
+def buy_decision(
+    ticker: str,
     dd: float,
     vol_status: str,
-    recovery_confirmed: bool,
-    recession_confirmed: bool,
+    recovery_confirmed: bool = False,
+    recession_confirmed: bool = False,
 ) -> Tuple[str, Tuple[int, int], bool]:
+    if ticker not in BUY_DRAWDOWN_THRESHOLDS:
+        raise ValueError("ticker must be VOO or QQQ")
+    initial_dd, deep_dd, bear_dd = BUY_DRAWDOWN_THRESHOLDS[ticker]
     recession_modifier = recession_confirmed and vol_status in {"Panic", "Extreme", "Systemic"}
     if recovery_confirmed:
         return "Recovery confirmation", (25, 30), False
-    if recession_modifier and dd <= -10.0:
+    if recession_modifier and dd <= initial_dd:
         return "Systemic/recession panic — slow tranche", (10, 15), True
-    if dd <= -10.0 and vol_status in {"Extreme", "Systemic"}:
+    if dd <= initial_dd and vol_status in {"Extreme", "Systemic"}:
         return "Extreme panic", (15, 20), False
-    if dd <= -20.0 and vol_status in {"Panic", "Extreme", "Systemic"}:
+    if dd <= bear_dd and vol_status in {"Panic", "Extreme", "Systemic"}:
         return "Bear market", (25, 25), False
-    if dd <= -15.0 and vol_status in {"Panic", "Extreme", "Systemic"}:
+    if dd <= deep_dd and vol_status in {"Panic", "Extreme", "Systemic"}:
         return "Deep correction", (20, 20), False
-    if dd <= -10.0 and vol_status in {"Stress", "Panic", "Extreme", "Systemic"}:
+    if dd <= initial_dd and vol_status in {"Stress", "Panic", "Extreme", "Systemic"}:
         return "Initial correction", (10, 15), False
     return "No panic-buy tranche", (0, 0), False
 
@@ -254,14 +289,14 @@ def assess_market(inputs: MarketInputs, live_vol_percentile: float | None = None
     valuation = _valuation(inputs.cape, inputs.buffett_ratio)
     recession = _recession(inputs)
     monetary = _monetary(inputs.real_fed_funds, inputs.nfci, inputs.nfci_delta_13w)
-    fragility = _fragility(inputs)
+    fragility, fragility_signals = _fragility(inputs)
     panic, vol_status, vol_pct = _panic(inputs, dd, live_vol_percentile)
     active, escalation_signals, escalation_count, escalation_status = _escalation(inputs, dd)
     recovery_signals, recovery_confirmed = _recovery(inputs, dd)
 
     recession_confirmed = recession.status == "Confirmed stress"
-    buy_stage, buy_tranche, recession_modifier = _buy_decision(
-        inputs, dd, vol_status, recovery_confirmed, recession_confirmed
+    buy_stage, buy_tranche, recession_modifier = buy_decision(
+        inputs.ticker, dd, vol_status, recovery_confirmed, recession_confirmed
     )
 
     if recovery_confirmed:
@@ -301,6 +336,7 @@ def assess_market(inputs: MarketInputs, live_vol_percentile: float | None = None
         escalation_count=escalation_count,
         escalation_status=escalation_status,
         escalation_signals=escalation_signals,
+        fragility_signals=fragility_signals,
         volatility_status=vol_status,
         volatility_percentile=vol_pct,
         recovery_signals=recovery_signals,

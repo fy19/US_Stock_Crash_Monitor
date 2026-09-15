@@ -1,8 +1,8 @@
-# US Market Regime Monitor v2.2
+# US Market Regime Monitor v2.3
 
 A Streamlit dashboard that classifies the market regime for VOO (S&P 500) and QQQ (Nasdaq-100).
 
-Version 2.2 removes the misleading single “Crash Risk Score” and the rule that higher stress should automatically lead to more selling. It separates risk build-up from an active drawdown and from contrarian buying during panic.
+Version 2.3 removes the misleading single “Crash Risk Score” and the rule that higher stress should automatically lead to more selling. It separates risk build-up from an active drawdown and from contrarian buying during panic, with a dedicated QQQ structure and drawdown calibration.
 
 ## Decision architecture
 
@@ -17,7 +17,7 @@ Version 2.2 removes the misleading single “Crash Risk Score” and the rule th
 | Valuation | CAPE, Buffett Indicator | Long-horizon valuation background; correlated measures get one vote |
 | Recession | 10Y-3M, Sahm, credit/conditions confirmation | Separates a labor warning from recession confirmation |
 | Monetary/Liquidity | Real Fed Funds, NFCI and 13-week change | Captures tightening bears such as 2018 and 2022 |
-| Fragility | 50/200DMA and equal-weight relative strength; semiconductors for QQQ | Measures internal market deterioration |
+| Fragility | 50/200DMA; Nasdaq-100 breadth, QQQ/QQEW, SMH/QQQ and Top-10 weight for QQQ | Measures internal market deterioration |
 | Panic/Stress | VIX/VXN, drawdown and HY OAS | Confirms stress and finds contrarian buying conditions |
 
 The five modules are not averaged into a single score. Correlated indicators such as CAPE and the Buffett Indicator do not receive duplicate votes.
@@ -41,7 +41,7 @@ These are v1 rules awaiting full backtest calibration, not event probabilities.
 
 ## Separate VOO and QQQ thresholds
 
-VOO uses VIX. QQQ uses VXN and additionally monitors QQEW/QQQ and SMH/QQQ.
+VOO uses VIX. QQQ uses VXN and additionally monitors current-constituent Nasdaq-100 breadth, QQQ/QQEW, SMH/QQQ and mega-cap concentration. QQQ/QQEW and Top-10 weight form one concentration vote rather than two correlated votes.
 
 | Asset | Normal | Watch | Stress | Panic | Extreme | Systemic |
 |---|---:|---:|---:|---:|---:|---:|
@@ -50,15 +50,24 @@ VOO uses VIX. QQQ uses VXN and additionally monitors QQEW/QQQ and SMH/QQQ.
 
 The live model combines these absolute thresholds with a five-year rolling percentile.
 
+The drawdown ladder is also asset-specific:
+
+| Asset | Initial | Deep Correction | Bear Market |
+|---|---:|---:|---:|
+| VOO | -10% | -15% | -20% |
+| QQQ | -12% | -20% | -30% |
+
+With other conditions held constant, an 18% drawdown therefore reaches Deep for VOO but only Initial for QQQ.
+
 ## Panic Buy Engine
 
 All percentages refer to a separately predefined **Crash Reserve**, not the entire portfolio.
 
 | Stage | Core condition | Reserve tranche |
 |---|---|---:|
-| Initial Correction | 10–15% drawdown + Stress | 10–15% |
-| Deep Correction | 15–20% drawdown + Panic | 20% |
-| Bear Market | 20–30% drawdown + Panic | 25% |
+| Initial Correction | Asset-specific Initial drawdown + Stress | 10–15% |
+| Deep Correction | Asset-specific Deep drawdown + Panic | 20% |
+| Bear Market | Asset-specific Bear drawdown + Panic | 25% |
 | Extreme Panic | VIX≥40 / VXN≥45 plus large drawdown | 15–20% |
 | Recovery | Two of three recovery conditions | 25–30% |
 
@@ -68,7 +77,8 @@ Recovery requires two of: volatility having reached Panic during the current dra
 
 ## Data
 
-- Yahoo Finance: VOO/QQQ prices, VIX/VXN, RSP/SPY, QQEW/QQQ and SMH/QQQ.
+- Nasdaq: the current Nasdaq-100 security list.
+- Yahoo Finance: VOO/QQQ prices, VIX/VXN, SPY/RSP, QQQ/QQEW, SMH/QQQ, constituent moving averages and QQQ holdings.
 - FRED: DGS10, DGS3MO, FEDFUNDS, CPIAUCSL, SAHMREALTIME, BAMLH0A0HYM2 and NFCI.
 - CAPE and the Buffett Indicator remain manual inputs so low-frequency data is not presented as real-time.
 
@@ -91,12 +101,12 @@ python -m unittest discover -s tests -v
 
 ## Current limitations
 
-- Fragility uses ETF trend and equal-weight relative strength as breadth proxies, not true constituent breadth.
+- Nasdaq-100 breadth uses actual constituent moving averages but the current constituent list. It is suitable for live diagnosis; historical use has survivorship bias and is not a point-in-time backtest.
 - CAPE/Buffett 0–100 readings are transparent historical-range approximations; a full backtest should use point-in-time percentiles.
 - A daily, look-ahead-free 1995–2026 backtest has not yet been completed.
 - Free market and macro data may be delayed or revised.
 
-The next milestone is Daily Backtest v1 with Precision, Recall, False Positive rate, Lead Time, Max Drawdown, CAGR and Sortino, calibrated separately for VOO and QQQ.
+The next milestone is a point-in-time Nasdaq-100 constituent history and Daily Backtest v1 with Precision, Recall, False Positive rate, Lead Time, Max Drawdown, CAGR and Sortino.
 
 ## Disclaimer
 

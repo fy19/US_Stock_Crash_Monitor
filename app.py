@@ -1,9 +1,11 @@
-"""Streamlit dashboard for the US Market Regime Monitor v2.2."""
+"""Streamlit dashboard for the US Market Regime Monitor v2.3."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import html
+import json
 import os
+from urllib.request import Request, urlopen
 
 import numpy as np
 import pandas as pd
@@ -11,12 +13,19 @@ import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
 
-from model import MarketInputs, VOLATILITY_THRESHOLDS, assess_market
+from calibration import crisis_calibration_rows
+from model import (
+    BUY_DRAWDOWN_THRESHOLDS,
+    MarketInputs,
+    VOLATILITY_THRESHOLDS,
+    assess_market,
+)
 
 
 GITHUB_URL = "https://github.com/fy19/US_Stock_Crash_Monitor"
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
-UI_VERSION = "v2.2.1"
+NASDAQ_100_URL = "https://api.nasdaq.com/api/quote/list-type/nasdaq100"
+UI_VERSION = "v2.3.0"
 
 
 @dataclass
@@ -29,15 +38,21 @@ class MarketSnapshot:
     volatility: float
     volatility_peak_since_price_peak: float
     volatility_percentile_5y: float
-    equal_weight_ratio: float
-    equal_weight_sma_50: float
+    cap_equal_ratio: float
+    cap_equal_sma_50: float
+    breadth_50_pct: float | None
+    breadth_200_pct: float | None
+    breadth_constituent_count: int
+    breadth_is_current_constituents: bool
+    mega_cap_top10_pct: float | None
+    mega_cap_is_fallback: bool
     semi_ratio: float | None
     semi_ratio_sma_50: float | None
     is_mock: bool
 
 
 st.set_page_config(
-    page_title="US Market Regime Monitor v2.2",
+    page_title="US Market Regime Monitor v2.3",
     page_icon="🧭",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -143,6 +158,92 @@ def _history(symbol: str, period: str = "5y") -> pd.DataFrame:
     return data
 
 
+@st.cache_data(ttl=21600, show_spinner=False)
+def _nasdaq100_symbols() -> list[str]:
+    """Load the live Nasdaq-100 security list from Nasdaq's public endpoint."""
+    request = Request(
+        NASDAQ_100_URL,
+        headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"},
+    )
+    with urlopen(request, timeout=15) as response:
+        payload = json.load(response)
+    rows = payload.get("data", {}).get("data", {}).get("rows", [])
+    symbols = sorted({row["symbol"].replace(".", "-") for row in rows if row.get("symbol")})
+    if len(symbols) < 90:
+        raise ValueError("Nasdaq-100 constituent response is incomplete")
+    return symbols
+
+
+def _close_matrix(download: pd.DataFrame) -> pd.DataFrame:
+    if download.empty:
+        raise ValueError("constituent price download is empty")
+    if isinstance(download.columns, pd.MultiIndex):
+        if "Close" in download.columns.get_level_values(0):
+            close = download["Close"]
+        elif "Close" in download.columns.get_level_values(1):
+            close = download.xs("Close", axis=1, level=1)
+        else:
+            raise ValueError("bulk download has no Close field")
+    elif "Close" in download:
+        close = download[["Close"]]
+    else:
+        raise ValueError("bulk download has no Close field")
+    return close.apply(pd.to_numeric, errors="coerce")
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_nasdaq100_breadth() -> tuple[float | None, float | None, int]:
+    """Current-constituent breadth; not a point-in-time historical backtest."""
+    try:
+        symbols = _nasdaq100_symbols()
+        downloaded = yf.download(
+            symbols,
+            period="1y",
+            auto_adjust=True,
+            progress=False,
+            threads=20,
+            group_by="column",
+            timeout=5,
+        )
+        close = _close_matrix(downloaded)
+        above_50: list[bool] = []
+        above_200: list[bool] = []
+        for symbol in close.columns:
+            series = close[symbol].dropna()
+            if len(series) < 200:
+                continue
+            above_50.append(bool(series.iloc[-1] > series.tail(50).mean()))
+            above_200.append(bool(series.iloc[-1] > series.tail(200).mean()))
+        if len(above_200) < 70:
+            raise ValueError("too few constituents have 200-day histories")
+        return 100.0 * sum(above_50) / len(above_50), 100.0 * sum(above_200) / len(above_200), len(above_200)
+    except Exception:
+        return None, None, 0
+
+
+@st.cache_data(ttl=21600, show_spinner=False)
+def get_qqq_top10_weight() -> tuple[float, bool]:
+    """Return QQQ Top-10 portfolio weight, with a disclosed research fallback."""
+    try:
+        holdings = yf.Ticker("QQQ").funds_data.top_holdings
+        if holdings is None or holdings.empty:
+            raise ValueError("QQQ holdings are unavailable")
+        weight_column = next(
+            column for column in holdings.columns if "holding" in str(column).lower() and "percent" in str(column).lower()
+        )
+        weights = pd.to_numeric(holdings[weight_column], errors="coerce").dropna().head(10)
+        total = float(weights.sum())
+        if total <= 1.5:
+            total *= 100.0
+        if not 20.0 <= total <= 80.0:
+            raise ValueError("QQQ Top-10 weight is outside a plausible range")
+        return total, False
+    except Exception:
+        # Invesco's published concentration discussion reports about 53%.
+        # Keeping the flag makes this fallback visible in the dashboard.
+        return 53.0, True
+
+
 def _mock_snapshot(ticker: str) -> MarketSnapshot:
     rng = np.random.default_rng(22 if ticker == "QQQ" else 11)
     dates = pd.date_range(end=datetime.now(), periods=1260, freq="B")
@@ -167,8 +268,14 @@ def _mock_snapshot(ticker: str) -> MarketSnapshot:
         volatility=vol,
         volatility_peak_since_price_peak=vol * 1.7,
         volatility_percentile_5y=55.0,
-        equal_weight_ratio=1.0,
-        equal_weight_sma_50=1.0,
+        cap_equal_ratio=1.0,
+        cap_equal_sma_50=1.0,
+        breadth_50_pct=55.0 if ticker == "QQQ" else None,
+        breadth_200_pct=60.0 if ticker == "QQQ" else None,
+        breadth_constituent_count=100 if ticker == "QQQ" else 0,
+        breadth_is_current_constituents=ticker == "QQQ",
+        mega_cap_top10_pct=53.0 if ticker == "QQQ" else None,
+        mega_cap_is_fallback=ticker == "QQQ",
         semi_ratio=1.0 if ticker == "QQQ" else None,
         semi_ratio_sma_50=1.0 if ticker == "QQQ" else None,
         is_mock=True,
@@ -198,10 +305,15 @@ def get_market_snapshot(ticker: str, proxy: str = "") -> MarketSnapshot:
         benchmark_close = _close(_history(benchmark_symbol))
         ratio = pd.concat([equal_close, benchmark_close], axis=1, join="inner").dropna()
         ratio.columns = ["equal", "benchmark"]
-        equal_ratio = ratio["equal"] / ratio["benchmark"]
+        cap_equal_ratio = ratio["benchmark"] / ratio["equal"]
 
         semi_ratio = None
         semi_ratio_sma = None
+        breadth_50 = None
+        breadth_200 = None
+        breadth_count = 0
+        top10_weight = None
+        top10_fallback = False
         if ticker == "QQQ":
             semi_close = _close(_history("SMH"))
             semi = pd.concat([semi_close, benchmark_close], axis=1, join="inner").dropna()
@@ -209,6 +321,8 @@ def get_market_snapshot(ticker: str, proxy: str = "") -> MarketSnapshot:
             semi_series = semi["semi"] / semi["benchmark"]
             semi_ratio = float(semi_series.iloc[-1])
             semi_ratio_sma = float(semi_series.rolling(50).mean().iloc[-1])
+            breadth_50, breadth_200, breadth_count = get_nasdaq100_breadth()
+            top10_weight, top10_fallback = get_qqq_top10_weight()
 
         price_peak_date = price_close.tail(252).idxmax()
         vol_since_price_peak = vol_close.loc[vol_close.index >= price_peak_date]
@@ -223,8 +337,14 @@ def get_market_snapshot(ticker: str, proxy: str = "") -> MarketSnapshot:
             volatility=current_vol,
             volatility_peak_since_price_peak=float(vol_since_price_peak.max()),
             volatility_percentile_5y=vol_percentile,
-            equal_weight_ratio=float(equal_ratio.iloc[-1]),
-            equal_weight_sma_50=float(equal_ratio.rolling(50).mean().iloc[-1]),
+            cap_equal_ratio=float(cap_equal_ratio.iloc[-1]),
+            cap_equal_sma_50=float(cap_equal_ratio.rolling(50).mean().iloc[-1]),
+            breadth_50_pct=breadth_50,
+            breadth_200_pct=breadth_200,
+            breadth_constituent_count=breadth_count,
+            breadth_is_current_constituents=ticker == "QQQ" and breadth_count > 0,
+            mega_cap_top10_pct=top10_weight,
+            mega_cap_is_fallback=top10_fallback,
             semi_ratio=semi_ratio,
             semi_ratio_sma_50=semi_ratio_sma,
             is_mock=False,
@@ -375,8 +495,10 @@ def module_detail(name: str, drawdown: float, vol_name: str) -> str:
     if name == "Monetary/Liquidity":
         return f"实际政策利率 {real_fed_funds:.2f}% · NFCI 13周 {nfci_delta:+.2f}"
     if name == "Fragility":
-        ratio_name = "RSP/SPY" if ticker == "VOO" else "QQEW/QQQ + SMH/QQQ"
-        return f"50/200日均线 · {ratio_name} 相对强弱"
+        if ticker == "QQQ":
+            breadth_text = "breadth 暂缺" if breadth_50 is None else f"50DMA breadth {breadth_50:.0f}%"
+            return f"{breadth_text} · QQQ/QQEW · SMH/QQQ · Top 10"
+        return "50/200日均线 · SPY/RSP 集中度代理"
     return f"{vol_name} {market.volatility:.1f} · 回撤 {drawdown:.1f}% · HY较低点 {hy_oas - hy_low:+.2f}pp"
 
 
@@ -425,6 +547,33 @@ with st.sidebar.expander("宏观与信用输入", expanded=False):
     nfci = st.number_input("NFCI", value=float(macro["nfci"]), step=0.05)
     nfci_delta = st.number_input("NFCI 13周变化", value=float(macro["nfci_delta_13w"]), step=0.05)
 
+breadth_50 = market.breadth_50_pct
+breadth_200 = market.breadth_200_pct
+mega_cap_top10 = market.mega_cap_top10_pct
+if ticker == "QQQ":
+    with st.sidebar.expander("QQQ 专用校准", expanded=True):
+        st.caption("自动读取 Nasdaq-100 当前成分股 breadth；可在数据缺失时手动覆盖。")
+        if breadth_50 is None or breadth_200 is None:
+            st.warning("当前成分股行情未完整返回，breadth 暂不参与模型。")
+            use_manual_breadth = st.checkbox("使用手动 breadth", value=False)
+            manual_breadth_50 = st.number_input("50DMA breadth (%)", 0.0, 100.0, 50.0, 1.0)
+            manual_breadth_200 = st.number_input("200DMA breadth (%)", 0.0, 100.0, 50.0, 1.0)
+            if use_manual_breadth:
+                breadth_50 = float(manual_breadth_50)
+                breadth_200 = float(manual_breadth_200)
+        else:
+            st.metric("Nasdaq-100 50DMA breadth", f"{breadth_50:.1f}%")
+            st.metric("Nasdaq-100 200DMA breadth", f"{breadth_200:.1f}%")
+        mega_cap_top10 = st.number_input(
+            "QQQ Top-10 权重 (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(mega_cap_top10 or 53.0),
+            step=0.1,
+        )
+        if market.mega_cap_is_fallback:
+            st.caption("Top-10 自动持仓读取失败，当前 53% 为 Invesco 已披露的研究基准，可手动覆盖。")
+
 already_deployed = st.sidebar.slider("Crash Reserve 已投入", 0, 100, 0, 5, format="%d%%")
 
 inputs = MarketInputs(
@@ -445,8 +594,12 @@ inputs = MarketInputs(
     hy_oas_delta_13w=hy_delta,
     nfci=nfci,
     nfci_delta_13w=nfci_delta,
-    equal_weight_ratio=market.equal_weight_ratio,
-    equal_weight_sma_50=market.equal_weight_sma_50,
+    cap_equal_ratio=market.cap_equal_ratio,
+    cap_equal_sma_50=market.cap_equal_sma_50,
+    breadth_50_pct=breadth_50,
+    breadth_200_pct=breadth_200,
+    breadth_is_current_constituents=market.breadth_is_current_constituents,
+    mega_cap_top10_pct=mega_cap_top10,
     semi_ratio=market.semi_ratio,
     semi_ratio_sma_50=market.semi_ratio_sma_50,
 )
@@ -485,6 +638,50 @@ module_cols = st.columns(5)
 for column, (name, result) in zip(module_cols, assessment.modules.items()):
     with column:
         module_card(name, result, assessment.drawdown_pct, vol_name)
+
+if ticker == "QQQ":
+    st.subheader("QQQ 专用内部结构")
+    structure_cols = st.columns(5)
+    structure_cols[0].metric(
+        "Nasdaq-100 > 50DMA",
+        "N/A" if breadth_50 is None else f"{breadth_50:.1f}%",
+        help="按当前 Nasdaq-100 成分股计算。历史回看会有幸存者偏差。",
+    )
+    structure_cols[1].metric(
+        "Nasdaq-100 > 200DMA",
+        "N/A" if breadth_200 is None else f"{breadth_200:.1f}%",
+        help="按当前 Nasdaq-100 成分股计算。",
+    )
+    cap_equal_delta = (market.cap_equal_ratio / market.cap_equal_sma_50 - 1.0) * 100.0
+    structure_cols[2].metric(
+        "QQQ / QQEW",
+        f"{market.cap_equal_ratio:.3f}",
+        f"{cap_equal_delta:+.1f}% vs 50DMA",
+        delta_color="inverse",
+        help="上升表示市值权重股相对等权股更强，市场领导面趋窄。",
+    )
+    semi_delta = None
+    if market.semi_ratio is not None and market.semi_ratio_sma_50:
+        semi_delta = (market.semi_ratio / market.semi_ratio_sma_50 - 1.0) * 100.0
+    structure_cols[3].metric(
+        "SMH / QQQ",
+        "N/A" if market.semi_ratio is None else f"{market.semi_ratio:.3f}",
+        None if semi_delta is None else f"{semi_delta:+.1f}% vs 50DMA",
+        help="低于 50DMA 表示半导体相对强弱恶化。",
+    )
+    structure_cols[4].metric(
+        "QQQ Top-10",
+        "N/A" if mega_cap_top10 is None else f"{mega_cap_top10:.1f}%",
+        "≥50% 集中度预警" if mega_cap_top10 is not None and mega_cap_top10 >= 50.0 else "低于预警线",
+        delta_color="inverse",
+    )
+    breadth_note = (
+        f"breadth 覆盖 {market.breadth_constituent_count} 只证券；使用当前成分股口径，适合实时诊断，"
+        "不等于 point-in-time 无偏历史 breadth。"
+        if market.breadth_constituent_count
+        else "breadth 当前不可用，因此没有计入 Fragility；模型不会用代理值伪装真实 breadth。"
+    )
+    st.caption(breadth_note + " QQQ/QQEW 与 Top-10 属于同一集中度风险源，在 Fragility 中合计只投一票。")
 
 left, right = st.columns(2)
 with left:
@@ -534,22 +731,61 @@ chart.add_trace(go.Scatter(x=history.index, y=history["SMA_200"], name="200DMA",
 chart.update_layout(height=430, template="plotly_dark", margin=dict(l=20, r=20, t=20, b=20))
 st.plotly_chart(chart, width="stretch")
 
-with st.expander("查看 VOO / QQQ 独立恐慌阈值"):
+with st.expander("查看 VOO / QQQ 独立恐慌与买入阈值"):
     rows = []
     for asset, values in VOLATILITY_THRESHOLDS.items():
+        initial_dd, deep_dd, bear_dd = BUY_DRAWDOWN_THRESHOLDS[asset]
         rows.append({
             "标的": asset,
+            "波动率": "VIX" if asset == "VOO" else "VXN",
             "Watch": values[0],
             "Stress": values[1],
             "Panic": values[2],
             "Extreme": values[3],
             "Systemic": values[4],
+            "初始买入回撤": f"{initial_dd:.0f}%",
+            "深度调整回撤": f"{deep_dd:.0f}%",
+            "熊市回撤": f"{bear_dd:.0f}%",
         })
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
-    st.caption("VOO 使用 VIX；QQQ 使用 VXN。最终判断同时采用绝对阈值与5年滚动百分位。")
+    st.caption("VOO 使用 VIX；QQQ 使用 VXN。QQQ 的波动率和回撤阈值更高，避免把正常科技股波动误判成同等危机。")
+
+with st.expander("查看同一冲击下的 VOO / QQQ 档位校准"):
+    calibration_rows = [
+        {"共同回撤": "-10%", "VOO 档位": "Initial · 10–15%", "QQQ 档位": "等待 -12%"},
+        {"共同回撤": "-18%", "VOO 档位": "Deep · 20%", "QQQ 档位": "Initial · 10–15%"},
+        {"共同回撤": "-25%", "VOO 档位": "Bear · 25%", "QQQ 档位": "Deep · 20%"},
+        {"共同回撤": "-32%", "VOO 档位": "Bear · 25%", "QQQ 档位": "Bear · 25%"},
+    ]
+    st.dataframe(pd.DataFrame(calibration_rows), hide_index=True, width="stretch")
+    st.caption(
+        "这是控制变量校准：假设各自 VIX/VXN 已达到相应 Stress/Panic 门槛，只比较相同回撤下的档位。"
+        "它用于验证两套规则不同，不是对下一次危机收益的预测。"
+    )
+
+with st.expander("查看 2018 / 2020 / 2022 历史事件审计"):
+    historical_rows = []
+    for row in crisis_calibration_rows():
+        low, high = row["buy_tranche"]
+        tranche = f"{low}%" if low == high else f"{low}–{high}%"
+        historical_rows.append({
+            "事件": row["event"],
+            "标的": row["asset"],
+            "事件窗口最大回撤": f"{row['drawdown_pct']:.1f}%",
+            "VIX / VXN峰值": f"{row['volatility_peak']:.1f}",
+            "压力状态": row["volatility_status"],
+            "模型档位": row["buy_stage"],
+            "Crash Reserve": tranche,
+        })
+    st.dataframe(pd.DataFrame(historical_rows), hide_index=True, width="stretch")
+    st.caption(
+        "事件窗口数据用于阈值审计；2020 的 QQQ 最大回撤小于 VOO，而 2022 明显更深。"
+        "这里使用事件内峰值，不能当作无前视的逐日回测结果。"
+    )
 
 st.markdown("---")
 st.caption(
-    "数据：Yahoo Finance（价格、VIX/VXN、相对强弱）与 FRED（利率、Sahm、HY OAS、NFCI）。"
-    "模型仍需完整的1995–2026日频回测与真实成分股 breadth 数据校准；本项目仅供研究，不构成投资建议。"
+    "数据：Nasdaq（当前 Nasdaq-100 成分列表）、Yahoo Finance（价格、VIX/VXN、breadth 与相对强弱）"
+    "和 FRED（利率、Sahm、HY OAS、NFCI）。历史 breadth 仍需 point-in-time 成分数据做无幸存者偏差回测；"
+    "本项目仅供研究，不构成投资建议。"
 )

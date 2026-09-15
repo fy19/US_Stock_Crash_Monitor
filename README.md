@@ -1,8 +1,8 @@
-# US Market Regime Monitor v2.2
+# US Market Regime Monitor v2.3
 
 这是一个基于 Streamlit 的美股市场状态仪表盘，分别分析 VOO（S&P 500）和 QQQ（Nasdaq-100）。
 
-v2.2 不再输出一个容易误导的“崩盘风险总分”，也不再使用“分数越高、卖得越多”的规则。系统将市场估值与脆弱性、已发生的市场压力，以及恐慌后的分批买入分开处理。
+v2.3 不再输出一个容易误导的“崩盘风险总分”，也不再使用“分数越高、卖得越多”的规则。系统将市场估值与脆弱性、已发生的市场压力，以及恐慌后的分批买入分开处理，并为 QQQ 加入独立的内部结构与回撤校准。
 
 ## 三层决策结构
 
@@ -17,7 +17,7 @@ v2.2 不再输出一个容易误导的“崩盘风险总分”，也不再使用
 | Valuation | CAPE、Buffett Indicator | 长期估值背景；相关指标只计一票 |
 | Recession | 10Y-3M、Sahm、信用/金融条件确认 | 区分就业预警与衰退确认 |
 | Monetary/Liquidity | Real Fed Funds、NFCI 及 13 周变化 | 捕捉 2018/2022 式紧缩熊市 |
-| Fragility | 50/200DMA、等权/市值权重相对强弱；QQQ 另看半导体 | 衡量市场内部结构 |
+| Fragility | 50/200DMA；QQQ 另看 Nasdaq-100 breadth、QQQ/QQEW、SMH/QQQ 与 Top-10 权重 | 衡量市场内部结构 |
 | Panic/Stress | VIX/VXN、回撤、HY OAS | 确认压力并寻找逆向买入条件 |
 
 这五个模块不会被简单平均成一个总分。同一风险源（例如 CAPE 与 Buffett Indicator）不会重复加权。
@@ -41,7 +41,7 @@ v2.2 不再输出一个容易误导的“崩盘风险总分”，也不再使用
 
 ## VOO 与 QQQ 独立阈值
 
-VOO 使用 VIX；QQQ 使用 VXN，并额外观察 QQEW/QQQ 与 SMH/QQQ。
+VOO 使用 VIX；QQQ 使用 VXN，并额外观察 Nasdaq-100 breadth、QQQ/QQEW、SMH/QQQ 与 Mega-cap concentration。QQQ/QQEW 与 Top-10 权重属于同一集中度风险源，在 Fragility 中合计只计一票。
 
 | 标的 | Normal | Watch | Stress | Panic | Extreme | Systemic |
 |---|---:|---:|---:|---:|---:|---:|
@@ -50,15 +50,24 @@ VOO 使用 VIX；QQQ 使用 VXN，并额外观察 QQEW/QQQ 与 SMH/QQQ。
 
 实际判断同时使用绝对阈值与五年滚动百分位。
 
+QQQ 的回撤档位也单独提高：
+
+| 标的 | Initial | Deep Correction | Bear Market |
+|---|---:|---:|---:|
+| VOO | -10% | -15% | -20% |
+| QQQ | -12% | -20% | -30% |
+
+因此在其他条件一致时，同样 -18% 的回撤会让 VOO 进入 Deep 档，而 QQQ 仍只进入 Initial 档。
+
 ## Panic Buy Engine
 
 所有比例均针对预先独立留出的 **Crash Reserve**，不是整个投资组合。
 
 | 市场阶段 | 核心条件 | 本档预备资金 |
 |---|---|---:|
-| Initial Correction | 回撤 10–15% + Stress | 10–15% |
-| Deep Correction | 回撤 15–20% + Panic | 20% |
-| Bear Market | 回撤 20–30% + Panic | 25% |
+| Initial Correction | 达到各标的 Initial 回撤线 + Stress | 10–15% |
+| Deep Correction | 达到各标的 Deep 回撤线 + Panic | 20% |
+| Bear Market | 达到各标的 Bear 回撤线 + Panic | 25% |
 | Extreme Panic | VIX≥40 / VXN≥45 + 大回撤 | 15–20% |
 | Recovery | 3 项修复条件满足 2 项 | 25–30% |
 
@@ -68,7 +77,8 @@ Recovery 的三项条件是：本轮回撤期间波动率曾进入 Panic 且自�
 
 ## 数据
 
-- Yahoo Finance：VOO/QQQ 价格、VIX/VXN、RSP/SPY、QQEW/QQQ、SMH/QQQ。
+- Nasdaq：当前 Nasdaq-100 成分证券列表。
+- Yahoo Finance：VOO/QQQ 价格、VIX/VXN、SPY/RSP、QQQ/QQEW、SMH/QQQ、成分股均线与 QQQ 持仓。
 - FRED：DGS10、DGS3MO、FEDFUNDS、CPIAUCSL、SAHMREALTIME、BAMLH0A0HYM2、NFCI。
 - CAPE 与 Buffett Indicator：在侧边栏手动校准，避免把低频或滞后数据伪装成实时数据。
 
@@ -91,12 +101,12 @@ python -m unittest discover -s tests -v
 
 ## 当前限制
 
-- Fragility 使用 ETF 趋势与等权相对强弱作为 breadth 代理，并非真实成分股 breadth。
+- Nasdaq-100 breadth 是真实成分股均线统计，但使用的是“当前成分股”口径；实时诊断可用，历史回看存在幸存者偏差，不能冒充 point-in-time 无偏回测。
 - CAPE/Buffett 的 0–100 值为透明的历史区间近似；完整回测应使用 point-in-time 历史百分位。
 - 尚未完成 1995–2026 的逐日无前视偏差回测。
 - HY OAS、宏观数据和免费行情源可能存在发布滞后或修订。
 
-下一阶段应建立 Daily Backtest v1，报告 Precision、Recall、False Positive、Lead Time、Max Drawdown、CAGR 与 Sortino，并单独校准 VOO 和 QQQ。
+下一阶段应取得 point-in-time Nasdaq-100 历史成分数据，建立 Daily Backtest v1，并报告 Precision、Recall、False Positive、Lead Time、Max Drawdown、CAGR 与 Sortino。
 
 ## 免责声明
 
