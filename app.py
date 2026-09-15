@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import html
 import os
 
 import numpy as np
@@ -44,9 +45,83 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .regime-box {padding: 22px; border-radius: 12px; color: white; margin: 8px 0 18px 0;}
-    .small-note {color: #9da3ad; font-size: 0.85rem;}
-    div[data-testid="stMetric"] {background: #141923; border: 1px solid #303846; padding: 14px; border-radius: 10px;}
+    .regime-box {
+        padding: 24px 26px;
+        border-radius: 14px;
+        color: #ffffff;
+        margin: 10px 0 22px 0;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
+    }
+    .regime-box h2 {
+        color: #ffffff !important;
+        font-size: clamp(1.55rem, 2.5vw, 2rem) !important;
+        line-height: 1.15 !important;
+        margin: 0 0 12px 0 !important;
+    }
+    .regime-box div {color: #ffffff; font-size: 1.05rem; line-height: 1.6;}
+    .summary-card, .module-card {
+        background: #ffffff;
+        border: 1px solid #d9e2ec;
+        border-top: 5px solid var(--accent);
+        border-radius: 12px;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.07);
+        color: #172033;
+        width: 100%;
+    }
+    .summary-card {padding: 15px 16px 17px; min-height: 112px;}
+    .module-card {padding: 15px 14px 14px; min-height: 210px;}
+    .card-label {
+        color: #526071;
+        font-size: 0.9rem;
+        font-weight: 650;
+        line-height: 1.3;
+        margin-bottom: 9px;
+    }
+    .summary-value {
+        color: #111827;
+        font-size: clamp(1.55rem, 2.2vw, 2rem);
+        font-weight: 760;
+        letter-spacing: -0.025em;
+        line-height: 1.15;
+    }
+    .summary-meta, .module-score {
+        color: #66758a;
+        font-size: 0.78rem;
+        line-height: 1.35;
+        margin-top: 7px;
+    }
+    .status-row {
+        align-items: center;
+        color: #111827;
+        display: flex;
+        font-size: clamp(1.05rem, 1.45vw, 1.35rem);
+        font-weight: 760;
+        gap: 8px;
+        line-height: 1.25;
+        min-height: 42px;
+        overflow-wrap: anywhere;
+    }
+    .status-dot {
+        background: var(--accent);
+        border-radius: 999px;
+        box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+        display: inline-block;
+        flex: 0 0 11px;
+        height: 11px;
+        width: 11px;
+    }
+    .module-detail {
+        border-top: 1px solid #edf1f5;
+        color: #4b596b;
+        font-size: 0.78rem;
+        line-height: 1.5;
+        margin-top: 12px;
+        padding-top: 11px;
+    }
+    @media (max-width: 900px) {
+        .module-card {min-height: 0; margin-bottom: 8px;}
+        .summary-card {min-height: 0; margin-bottom: 6px;}
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -238,13 +313,88 @@ ACTION_ZH = {
     "RECOVERY": "恐慌回落且市场参与度修复：逐步投入最后一档预备资金。",
 }
 
-STATUS_ICON = {
-    "Healthy": "🟢", "Normal": "🟢", "Loose/Normal": "🟢", "Not confirmed": "🟢",
-    "Elevated": "🟡", "Background risk": "🟡", "Watch": "🟡", "Labor warning": "🟠",
-    "Expensive": "🟠", "Rising pressure": "🟠", "Deteriorating": "🟠", "Stress": "🟠",
-    "Extreme": "🔴", "Tight": "🔴", "Broken": "🔴", "Confirmed stress": "🔴",
-    "Panic": "🟣", "Systemic": "⚫",
+MODULE_ZH = {
+    "Valuation": "估值",
+    "Recession": "衰退风险",
+    "Monetary/Liquidity": "货币 / 流动性",
+    "Fragility": "市场脆弱度",
+    "Panic/Stress": "恐慌 / 压力",
 }
+
+STATUS_ZH = {
+    "Healthy": "健康",
+    "Normal": "正常",
+    "Loose/Normal": "宽松 / 正常",
+    "Not confirmed": "尚未确认",
+    "Elevated": "偏高",
+    "Background risk": "背景风险",
+    "Watch": "观察",
+    "Labor warning": "就业预警",
+    "Expensive": "昂贵",
+    "Rising pressure": "压力上升",
+    "Deteriorating": "正在恶化",
+    "Stress": "明显压力",
+    "Extreme": "极端",
+    "Tight": "紧缩",
+    "Broken": "结构破坏",
+    "Confirmed stress": "压力确认",
+    "Panic": "恐慌",
+    "Systemic": "系统性压力",
+}
+
+STATUS_COLOR = {
+    "Healthy": "#16805b", "Normal": "#16805b", "Loose/Normal": "#16805b", "Not confirmed": "#16805b",
+    "Elevated": "#c58a12", "Background risk": "#c58a12", "Watch": "#c58a12",
+    "Labor warning": "#dd6b20", "Expensive": "#dd6b20", "Rising pressure": "#dd6b20",
+    "Deteriorating": "#dd6b20", "Stress": "#dd6b20",
+    "Extreme": "#d63b3b", "Tight": "#d63b3b", "Broken": "#d63b3b", "Confirmed stress": "#d63b3b",
+    "Panic": "#7c4dcc", "Systemic": "#343a40",
+}
+
+
+def summary_card(label: str, value: str, meta: str = "", accent: str = "#3867d6") -> None:
+    st.markdown(
+        f"""
+        <div class="summary-card" style="--accent:{accent}">
+            <div class="card-label">{html.escape(label)}</div>
+            <div class="summary-value">{html.escape(value)}</div>
+            <div class="summary-meta">{html.escape(meta)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def module_detail(name: str, drawdown: float, vol_name: str) -> str:
+    if name == "Valuation":
+        return f"CAPE {cape:.1f} · Buffett {buffett:.0f}% · 同源只计一票"
+    if name == "Recession":
+        inverted = "是" if curve_inverted else "否"
+        return f"Sahm {sahm:.2f} · 近24个月倒挂：{inverted}"
+    if name == "Monetary/Liquidity":
+        return f"实际政策利率 {real_fed_funds:.2f}% · NFCI 13周 {nfci_delta:+.2f}"
+    if name == "Fragility":
+        ratio_name = "RSP/SPY" if ticker == "VOO" else "QQEW/QQQ + SMH/QQQ"
+        return f"50/200日均线 · {ratio_name} 相对强弱"
+    return f"{vol_name} {market.volatility:.1f} · 回撤 {drawdown:.1f}% · HY较低点 {hy_oas - hy_low:+.2f}pp"
+
+
+def module_card(name: str, result, drawdown: float, vol_name: str) -> None:
+    accent = STATUS_COLOR.get(result.status, "#66758a")
+    st.markdown(
+        f"""
+        <div class="module-card" style="--accent:{accent}">
+            <div class="card-label">{html.escape(MODULE_ZH[name])}</div>
+            <div class="status-row">
+                <span class="status-dot"></span>
+                <span>{html.escape(STATUS_ZH.get(result.status, result.status))}</span>
+            </div>
+            <div class="module-score">诊断值 {result.score}/100</div>
+            <div class="module-detail">{html.escape(module_detail(name, drawdown, vol_name))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 st.sidebar.title("🧭 模型输入")
@@ -317,19 +467,23 @@ st.markdown(
 )
 
 top1, top2, top3, top4 = st.columns(4)
-top1.metric("最新价格", f"${market.current_price:,.2f}")
-top2.metric("52周回撤", f"{assessment.drawdown_pct:.1f}%")
 vol_name = "VIX" if ticker == "VOO" else "VXN"
-top3.metric(vol_name, f"{market.volatility:.1f}", assessment.volatility_status)
-top4.metric("5年波动率百分位", f"P{market.volatility_percentile_5y:.0f}")
+with top1:
+    summary_card("最新价格", f"${market.current_price:,.2f}", ticker, "#3867d6")
+with top2:
+    dd_accent = "#d63b3b" if assessment.drawdown_pct <= -10 else "#16805b"
+    summary_card("52周回撤", f"{assessment.drawdown_pct:.1f}%", "Escalation Gate 于 -10% 启动", dd_accent)
+with top3:
+    vol_accent = STATUS_COLOR.get(assessment.volatility_status, "#3867d6")
+    summary_card(vol_name, f"{market.volatility:.1f}", STATUS_ZH.get(assessment.volatility_status, assessment.volatility_status), vol_accent)
+with top4:
+    summary_card("5年波动率百分位", f"P{market.volatility_percentile_5y:.0f}", "滚动历史位置", "#6b5bd2")
 
 st.subheader("五模块状态（不计算简单平均总分）")
 module_cols = st.columns(5)
 for column, (name, result) in zip(module_cols, assessment.modules.items()):
     with column:
-        icon = STATUS_ICON.get(result.status, "⚪")
-        st.metric(name, f"{icon} {result.status}", f"诊断值 {result.score}/100", delta_color="off")
-        st.caption(result.detail)
+        module_card(name, result, assessment.drawdown_pct, vol_name)
 
 left, right = st.columns(2)
 with left:
