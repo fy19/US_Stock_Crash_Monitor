@@ -16,6 +16,7 @@ from model import MarketInputs, VOLATILITY_THRESHOLDS, assess_market
 
 GITHUB_URL = "https://github.com/fy19/US_Stock_Crash_Monitor"
 FRED_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={}"
+UI_VERSION = "v2.2.1"
 
 
 @dataclass
@@ -452,7 +453,7 @@ inputs = MarketInputs(
 assessment = assess_market(inputs, market.volatility_percentile_5y)
 
 st.title(f"US Market Regime — {ticker}")
-st.caption("v2.2 · Risk Build-up → Escalation Gate → Panic Buy Engine")
+st.caption(f"{UI_VERSION} · Risk Build-up → Escalation Gate → Panic Buy Engine")
 
 if market.is_mock:
     st.warning("Yahoo Finance 连接失败：价格、波动率和趋势正在使用模拟数据，不能用于投资决策。")
